@@ -1,0 +1,32 @@
+{
+  "name": "contract-management",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "合同管理系统 — 本地开发模式",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "setup": "npm run db:up && npm run db:migrate && npm run db:seed",
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w apps/server",
+    "dev:web": "npm run dev -w apps/web",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d db",
+    "db:migrate": "npm run db:migrate -w apps/server",
+    "db:seed": "npm run db:seed -w apps/server",
+    "db:studio": "npm run db:studio -w apps/server",
+    "build": "npm run build -w apps/web",
+    "typecheck": "npm run typecheck -w apps/server && npm run typecheck -w apps/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

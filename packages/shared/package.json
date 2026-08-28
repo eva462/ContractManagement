@@ -1,0 +1,18 @@
+{
+  "name": "@contract/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "前后端唯一的接口契约：枚举、常量、Zod schema。改了这里，前端会立刻编译报错。",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  }
+}

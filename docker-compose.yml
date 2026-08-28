@@ -1,0 +1,25 @@
+# 本地开发用。生产部署（域名/HTTPS/备份容器）不在本阶段范围内。
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+    container_name: contract-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: contract
+      POSTGRES_PASSWORD: contract
+      POSTGRES_DB: contract
+      # 中文排序与大小写不敏感搜索依赖 collation，显式固定下来
+      LANG: C.UTF-8
+    ports:
+      # 映射到 5433，避免和机器上可能已有的本地 Postgres 抢 5432
+      - "5433:5432"
+    volumes:
+      - contract-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contract -d contract"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  contract-pgdata:

@@ -1,0 +1,217 @@
+// 枚举值必须与 packages/shared/src/enums.ts 逐字一致。
+// 改任何一边都要同步另一边，否则运行时才会炸。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+// 只有 4 个存储状态。「已到期」由 expiryDate 实时派生，不落库。
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  TERMINATED
+  ARCHIVED
+}
+
+enum ContractType {
+  PURCHASE
+  SALES
+  SERVICE
+  LEASE
+  LABOR
+  NDA
+  FRAMEWORK
+  OTHER
+}
+
+enum AmountType {
+  TAX_INCLUDED
+  TAX_EXCLUDED
+  NO_AMOUNT
+}
+
+enum Currency {
+  CNY
+  USD
+  EUR
+  HKD
+}
+
+enum AttachmentType {
+  ORIGINAL
+  SUPPLEMENT
+  ANNEX
+  OTHER
+}
+
+enum AuditEntityType {
+  CONTRACT
+  ATTACHMENT
+  USER
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  STATUS_CHANGE
+  DELETE
+  UPLOAD
+  DOWNLOAD
+  LOGIN
+  LOGIN_FAILED
+  EXTRACT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  displayName  String
+  role         Role     @default(STAFF)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ownedContracts   Contract[]           @relation("ContractOwner")
+  createdContracts Contract[]           @relation("ContractCreatedBy")
+  updatedContracts Contract[]           @relation("ContractUpdatedBy")
+  uploads          ContractAttachment[]
+  auditLogs        AuditLog[]
+  refreshTokens    RefreshToken[]
+
+  @@map("users")
+}
+
+// refresh token 只存哈希，库被看到也不能拿来换 access token
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Contract {
+  id String @id @default(cuid())
+
+  // 草稿允许没有编号；Postgres 的唯一索引允许多个 NULL，正好符合需要
+  contractNo String? @unique
+
+  title               String
+  contractType        ContractType?
+  counterpartyName    String?
+  counterpartyContact String?
+
+  amountType   AmountType?
+  amount       Decimal?    @db.Decimal(18, 2) // 绝不用浮点存钱
+  currency     Currency    @default(CNY)
+  paymentTerms String?
+
+  signDate      DateTime? @db.Date
+  effectiveDate DateTime? @db.Date
+  expiryDate    DateTime? @db.Date
+  isPerpetual   Boolean   @default(false)
+
+  ownerId String?
+  status  ContractStatus @default(DRAFT)
+
+  // 归档前的状态。解除归档时回到这里，而不是笼统地回到 ACTIVE。
+  archivedFrom ContractStatus?
+
+  originalLocation  String?
+  remark            String?
+  terminatedAt      DateTime? @db.Date
+  terminationReason String?
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime? // 软删除。查询一律带 deletedAt: null
+
+  owner       User?                @relation("ContractOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  createdBy   User?                @relation("ContractCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy   User?                @relation("ContractUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  attachments ContractAttachment[]
+
+  @@index([status])
+  @@index([ownerId])
+  @@index([contractType])
+  @@index([signDate])
+  @@index([expiryDate])
+  @@index([deletedAt])
+
+  // 中文关键词搜索用 ILIKE '%x%'，走不了 B-tree；trgm 的 GIN 索引可以。
+  // 必须在这里声明，否则 prisma migrate 会把手写的索引当成 drift 再 DROP 掉。
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([contractNo(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([counterpartyName(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("contracts")
+}
+
+model ContractAttachment {
+  id         String @id @default(cuid())
+  contractId String
+
+  fileName String // 原始文件名，下载时用它，用户看到的是自己传的中文名
+  fileSize Int
+  mimeType String
+  sha256   String // 内容哈希：同一文件重复上传不重复占磁盘，也可用来校验损坏
+
+  // 存储层的键。当前是本地磁盘相对路径，换成 S3 时这里放对象 key，业务代码不用改。
+  storageKey String
+
+  attachmentType AttachmentType @default(ANNEX)
+  uploadedById   String?
+  uploadedAt     DateTime       @default(now())
+
+  contract   Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  uploadedBy User?    @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([contractId])
+  @@index([sha256])
+  @@map("contract_attachments")
+}
+
+// 只增不改不删。应用层不提供任何 UPDATE/DELETE 接口，
+// 迁移里另有数据库触发器兜底（见 migrations/.../migration.sql）。
+model AuditLog {
+  id String @id @default(cuid())
+
+  entityType AuditEntityType
+  entityId   String
+  action     AuditAction
+
+  userId   String?
+  userName String // 写入时的快照，改名或停用账号后历史记录依然可读
+
+  summary String // 人话摘要，时间线直接显示
+  changes Json? // 字段级 before/after，只含真正变化的字段
+
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

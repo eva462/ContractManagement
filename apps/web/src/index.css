@@ -1,0 +1,72 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', system-ui, -apple-system,
+    sans-serif;
+  --font-mono: 'Cascadia Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+
+  /* ── 冷调中性灰阶 ──────────────────────────────────────────────────
+   *
+   * 覆盖 Tailwind 默认的 slate，这样全站 200+ 处 slate-* 类名一行不用改。
+   * 其中 5 个是设计给定的锚点，其余按亮度插值补齐：
+   *
+   *   50  #F7F8F9  ← 给定
+   *   200 #DFE3E6  ← 给定
+   *   400 #A7A8AA  ← 给定
+   *   500 #87898B  ← 给定
+   *   600 #61666B  ← 给定
+   *
+   * ⚠️ 400 和 500 在白底上的对比度只有 2.4 和 3.5，**达不到正文要求（AA 需 4.5）**。
+   *    它们是给边框、分隔线、图标、禁用态用的，不是正文色。
+   *    正文层级一律用 600 及以上：600=弱化 700=次要 800=正文 900=标题。
+   */
+  --color-slate-50: #f7f8f9;
+  --color-slate-100: #ebeef0;
+  --color-slate-200: #dfe3e6;
+  --color-slate-300: #c3c6c8;
+  --color-slate-400: #a7a8aa;
+  --color-slate-500: #87898b;
+  --color-slate-600: #61666b;
+  --color-slate-700: #4e5357;
+  --color-slate-800: #3c4145;
+  --color-slate-900: #24272b;
+  --color-slate-950: #16181a;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-slate-100);
+    color: var(--color-slate-900);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 日期、金额这类要竖着对齐的数字一律等宽 */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 表单控件在 iOS 上字号小于 16px 会触发自动放大，统一压住 */
+  input,
+  select,
+  textarea,
+  button {
+    font-family: inherit;
+    font-size: 16px;
+  }
+
+  @media (min-width: 640px) {
+    input,
+    select,
+    textarea,
+    button {
+      font-size: 14px;
+    }
+  }
+}

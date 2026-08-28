@@ -1,0 +1,77 @@
+# 合同管理系统
+
+公司内部自用的合同台账系统。**当前处于本地开发阶段**，不含生产部署与移动端发布。
+
+已实现两条闭环：手工录入 → 台账 → 查看/编辑 → 附件 → 留痕；以及上传合同 → AI 识别 → 预填表单 → 人工核对 → 保存。
+
+## 跑起来
+
+需要 Node 20.19+ 和 **Docker Desktop（要先启动）**。
+
+```bash
+cp .env.example .env
+npm install          # postinstall 会自动 prisma generate
+npm run setup        # 起 Postgres 容器 + 建表 + 灌种子
+npm run dev          # 后端 :3100，前端 :5273
+```
+
+种子账号 `admin` / `manager` / `staff`，密码都是 `admin123`。
+
+内容识别是可选的：`.env` 里填 `DEEPSEEK_API_KEY` 才启用，不填则识别入口自动隐藏，其余功能完全不受影响。
+
+## 技术栈
+
+npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 5 + Prisma 6（后端）· PostgreSQL 16（Docker）· Zod 契约放 `packages/shared`。
+
+## 架构约束（改动前必读）
+
+- **`packages/shared` 是前后端唯一契约。** 枚举、常量、Zod schema、格式化函数都在这。改了字段前端会立刻编译报错——这是设计如此，别绕过。
+- **四个可替换边界**，实现只在 `apps/server/src/context.ts` 里 `new`，路由和服务层只依赖接口：
+  | 边界 | 接口 |
+  |---|---|
+  | 认证 | `src/auth/provider.ts` |
+  | 附件存储 | `src/storage/provider.ts` |
+  | 字段识别 | `src/extraction/provider.ts` |
+  | API 地址 | `apps/web/src/config.ts` 读 `VITE_API_BASE_URL` |
+- **跨模块通用类型放 `src/types.ts`，用户映射放 `modules/user/mapper.ts`。** 别塞进 `modules/contract/`——那会让别的模块反过来依赖合同模块。
+- **业务模块之间无循环依赖。** 都单向指向 `audit`，`audit` 不反向依赖任何模块。
+
+## 不要绕过的约定
+
+- **金额全程用字符串传输**，库里是 `DECIMAL(18,2)`。JSON 的 number 是双精度浮点，`123456789.15` 往返一次就变形。
+- **日期在网络上一律 `'YYYY-MM-DD'` 字符串**，只在写库前转 `Date`。这样不用处理时区。
+- **「已到期」不是存储状态**，由 `expiryDate` 实时派生（`computeExpiryState`）。存储状态只有 `DRAFT / ACTIVE / TERMINATED / ARCHIVED` 四个。所以不需要定时任务，也不会有「状态和日期对不上」的脏数据。
+- **审计日志与业务写入必须同一事务。** `writeAudit()` 只接受事务客户端 `Tx`，用类型焊死了。
+- **审计日志只增不改不删。** 应用层没有 UPDATE/DELETE 接口，数据库层还有触发器兜底。因此引用 `audit_logs` 的外键必须是 `Restrict` 而不是 Prisma 默认的 `SetNull`。
+- **只有草稿能删。** 其他状态一律只能归档。归档后对所有人只读，ADMIN 也要先解除归档。
+- **前端隐藏按钮不算权限**，后端每个接口都会再判一次。
+- **AI 识别结果永远不直接入库**，只预填表单，人核对后走与手工录入完全相同的接口和校验。
+- **PDF 解析/渲染/切块永远在本地做**（`extraction/document-loader.ts`），刻意不在可替换边界内——换 AI 供应商时这部分不受影响。
+- **提示词里的 JSON 示例会被模型当成字段白名单。** 实测：示例里只写 8 个字段时，另外 3 个明明在原文里也不输出（准确率 73%）。字段表和示例**两处都要改**，只改一处会静默漏识别。
+- **本地 PDF 解析不是瓶颈。** 实测 20 页抽文本 72ms、扫描件渲染切块 2.5s，而一次模型调用要 10–40 秒。想快只能换模型，拆页并行省不出东西。
+
+## 测试
+
+```bash
+npm run smoke -w apps/server           # 接口冒烟 77 项（需先 npm run dev）
+npm run test:normalize -w apps/server  # 金额/日期归一化 25 项
+npm run test:extraction -w apps/server # 内容识别端到端 34 项（假服务，不出网）
+npm run verify:live -w apps/server     # 真实调用验准确率（会计费）
+npm run bench:parse -w apps/server     # 量本地 PDF 解析耗时
+```
+
+冒烟测试是**幂等**的，可以在同一个库上反复跑，不需要每次 `db:reset`。写新断言时保持这个性质：不要写死条数或编号，用交叉验证代替。
+
+## 文档
+
+- `docs/design/00-总体设计.md` —— 候选设计，**未冻结**，与后续模块文档冲突处以模块文档为准
+- `docs/design/01-合同主数据模块.md` —— 字段、状态、权限、验收标准
+- `docs/design/02-合同内容识别.md` —— DeepSeek 接入、两段式流水线、实测结果
+
+**约定：每个模块实现前先出一份模块设计**，放 `docs/design/NN-模块名.md`。
+
+## 下一步
+
+用户管理界面和审批流程是下一个模块（两者耦合，一起做）。用户管理的后端接口已经有了，缺界面。
+
+已知未做：导出 Excel、全局审计查询页、相对方独立表、数据字典维护。
