@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type PointerEvent, type ReactNode } from 'react'
-import type { PagePreview, RedactionRect } from '@contract/shared'
+import type { DetectedAmount, PagePreview, RedactionRect } from '@contract/shared'
 import { Modal } from './overlays'
 import { Button, cx } from './ui'
 
@@ -93,6 +93,29 @@ export function RedactionDialog({
 
   const total = rects.length
 
+  // 页面上检测出来的疑似金额。中文合同的金额常写两遍（大写 + 小写、
+  // 同一行不同位置），只框住一个很容易漏掉另一个 —— 所以全标出来。
+  const hints = pages.flatMap((pg) =>
+    pg.amounts.map((a) => ({ ...a, page: pg.pageIndex })),
+  )
+  const covered = (a: DetectedAmount & { page: number }): boolean =>
+    rects.some(
+      (r) =>
+        r.page === a.page &&
+        r.x <= a.x + 0.002 &&
+        r.y <= a.y + 0.002 &&
+        r.x + r.w >= a.x + a.w - 0.002 &&
+        r.y + r.h >= a.y + a.h - 0.002,
+    )
+  const remaining = hints.filter((a) => !covered(a))
+
+  const redactAllAmounts = (): void => {
+    setRects((prev) => [
+      ...prev,
+      ...remaining.map(({ page, x, y, w, h }) => ({ page, x, y, w, h })),
+    ])
+  }
+
   return (
     <Modal
       open={open}
@@ -119,6 +142,36 @@ export function RedactionDialog({
             涂抹只影响送去识别的副本 —— 存进系统的合同原件是完整的。
           </span>
         </div>
+
+        {hints.length > 0 && (
+          <div
+            className={cx(
+              'flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-sm ring-1',
+              remaining.length > 0
+                ? 'bg-amber-50 text-amber-900 ring-amber-200'
+                : 'bg-emerald-50 text-emerald-900 ring-emerald-200',
+            )}
+          >
+            <span>
+              {remaining.length > 0 ? (
+                <>
+                  这份合同里检测到 <strong>{hints.length}</strong> 处金额，还有{' '}
+                  <strong>{remaining.length}</strong> 处没涂。
+                  <span className="ml-1 text-xs text-amber-800/90">
+                    合同里的金额常写两遍（大写一遍、数字一遍），别只涂了其中一个。
+                  </span>
+                </>
+              ) : (
+                <>检测到的 {hints.length} 处金额都已经涂上了。</>
+              )}
+            </span>
+            {remaining.length > 0 && (
+              <Button size="sm" variant="primary" onClick={redactAllAmounts}>
+                一键涂掉这 {remaining.length} 处
+              </Button>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-slate-600">
@@ -180,6 +233,33 @@ export function RedactionDialog({
                     </button>
                   ))}
 
+                  {/* 检测到的金额：虚线提示，点一下单独涂掉 */}
+                  {page.amounts.map((a, ai) => {
+                    const withPage = { ...a, page: page.pageIndex }
+                    if (covered(withPage)) return null
+                    return (
+                      <button
+                        key={`hint-${ai}`}
+                        type="button"
+                        title={`疑似金额「${a.text}」—— 点一下涂掉`}
+                        onPointerDown={(e) => {
+                          e.stopPropagation()
+                          setRects((prev) => [
+                            ...prev,
+                            { page: page.pageIndex, x: a.x, y: a.y, w: a.w, h: a.h },
+                          ])
+                        }}
+                        className="absolute border-2 border-dashed border-amber-500 bg-amber-300/25 hover:bg-amber-400/40"
+                        style={{
+                          left: `${a.x * 100}%`,
+                          top: `${a.y * 100}%`,
+                          width: `${a.w * 100}%`,
+                          height: `${a.h * 100}%`,
+                        }}
+                      />
+                    )
+                  })}
+
                   {drawing && drawing.page === page.pageIndex && (
                     <div
                       className="pointer-events-none absolute bg-slate-900/50 ring-2 ring-slate-900"
@@ -199,6 +279,7 @@ export function RedactionDialog({
 
         <p className="text-xs text-slate-600">
           画错了点一下那个黑块就能删掉。
+          {hints.length > 0 && ' 黄色虚线是系统检测到的金额，点一下就能单独涂掉。'}
         </p>
       </div>
     </Modal>

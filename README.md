@@ -67,6 +67,8 @@ npm run compare -w apps/server -- ./合同1.pdf ./合同2.jpg
 | `npm run typecheck` | 前后端类型检查 |
 | `npm run smoke -w apps/server` | 模块一接口冒烟测试（76 项，需先起服务） |
 | `npm run test:normalize -w apps/server` | 金额/日期归一化单测（25 项） |
+| `npm run test:redaction -w apps/server` | 涂抹防泄漏验证（19 项，纯本地） |
+| `npm run show:redaction -w apps/server` | **把真正发出去的内容打印出来**，涂抹前后对照（纯本地，不花钱） |
 | `npm run test:extraction -w apps/server` | 内容识别端到端测试（34 项，用假识别服务，不出网） |
 | `npm run compare -w apps/server -- <文件...>` | 用同一批合同对比各家识别准确率（**会把文件发到厂商服务器**） |
 | `npm run sample -w apps/server` | 生成两份已知答案的样本合同（电子版 + 扫描件） |

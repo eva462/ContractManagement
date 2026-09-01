@@ -221,6 +221,47 @@ async function main() {
     otherPage.mode === 'text' && otherPage.text.includes(AMOUNT),
   )
 
+  /* ── D 金额检测 ─────────────────────────────────────────────────
+   *
+   * 中文合同的金额几乎总是写两遍（大写 + 阿拉伯数字），常在同一行不同位置。
+   * 用户框住其中一个就以为涂干净了，另一个照样出网 —— 这是这个功能最容易
+   * 出事的地方，所以专门检测出来提示。
+   */
+  section('D · 金额检测（防止只涂了一半）')
+
+  const { detectAmounts } = await import('../src/extraction/redact.ts')
+  const dDoc = mupdf.Document.openDocument(textPdf, 'application/pdf')
+  const dPage = dDoc.loadPage(0)
+  const [dx0, dy0, dx1, dy1] = dPage.getBounds()
+  const found = detectAmounts(dPage, dx1 - dx0, dy1 - dy0)
+  const texts = found.map((f) => f.text)
+
+  check('检测到阿拉伯数字金额', texts.some((t) => t.includes('128,600')), texts.join(' / '))
+  check('也检测到同一笔的中文大写金额', texts.some((t) => t.includes('壹拾贰万')), texts.join(' / '))
+  check(
+    '两者位置不同（正是只涂一个会漏的原因）',
+    found.length >= 2 && new Set(found.map((f) => f.x.toFixed(3))).size >= 2,
+  )
+  check('没把税率百分比误判成金额', !texts.some((t) => t === '13' || t === '13%'), texts.join(' / '))
+
+  const allBoxes = found.map((f) => ({ page: 0, x: f.x, y: f.y, w: f.w, h: f.h }))
+  const allText = (() => {
+    const d = loadDocument({
+      buffer: textPdf,
+      mimeType: 'application/pdf',
+      fileName: 'a.pdf',
+      redactions: allBoxes,
+    })
+    return d.mode === 'text' ? d.text : ''
+  })()
+
+  check(
+    '\x1b[1m一键涂掉检测到的全部金额后，两种写法都消失\x1b[0m',
+    !allText.includes('128,600') && !allText.includes('壹拾贰万'),
+    allText.includes('128,600') ? '数字仍在' : allText.includes('壹拾贰万') ? '大写仍在' : '',
+  )
+  check('但合同其余内容还在', allText.includes('增值税') && allText.length > 600, `剩余 ${allText.length} 字`)
+
   console.log(`\n${'─'.repeat(60)}`)
   if (failed === 0) console.log(`\x1b[32m\x1b[1m全部通过\x1b[0m  ${passed} 项`)
   else {

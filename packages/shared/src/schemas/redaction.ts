@@ -59,6 +59,19 @@ export function describeRedactions(rects: RedactionRect[]): string {
   return `涂抹 ${rects.length} 处，覆盖第 ${pages.join('、')} 页`
 }
 
+/**
+ * 检测到的疑似金额位置。**纯提示，不自动涂** ——
+ * 「税率 13%」这类也会被模式命中，该涂什么终究得人定。
+ */
+export interface DetectedAmount {
+  /** 原文，让用户知道要涂的是哪个 */
+  text: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 /** 一页预览图。服务端本地渲染，前端拿它当画布拉涂抹框。 */
 export interface PagePreview {
   pageIndex: number
@@ -66,4 +79,10 @@ export interface PagePreview {
   imageBase64: string
   width: number
   height: number
+  /**
+   * 这一页里像金额的地方。中文合同的金额常写两遍（大写 + 小写、
+   * 同行不同位置），只框住一个很容易漏 —— 所以全标出来让人一眼看见。
+   * 扫描件没有文本层，这里会是空数组。
+   */
+  amounts: DetectedAmount[]
 }

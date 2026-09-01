@@ -22,7 +22,8 @@
     "demo:start": "tsx scripts/demo-tunnel.mjs start",
     "demo:end": "tsx scripts/demo-tunnel.mjs end",
     "postinstall": "prisma generate",
-    "test:redaction": "tsx scripts/redaction-test.mjs"
+    "test:redaction": "tsx scripts/redaction-test.mjs",
+    "show:redaction": "tsx scripts/show-redaction.mjs"
   },
   "dependencies": {
     "@contract/shared": "*",
