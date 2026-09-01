@@ -113,6 +113,8 @@ export function RedactionDialog({
         r.y + r.h >= a.y + a.h - 0.002,
     )
   const remaining = hints.filter((a) => !covered(a))
+  // 一页都没有文字层 = 整份都是扫描件，自动检测帮不上忙
+  const noTextLayer = pages.length > 0 && pages.every((pg) => !pg.hasTextLayer)
 
   /** 「2 处金额、1 处银行账号、1 处身份证号」 */
   const summary = Object.entries(
@@ -158,7 +160,20 @@ export function RedactionDialog({
           </span>
         </div>
 
-        {hints.length > 0 && (
+        {/*
+          扫描件必须单独说一句。sensitive 为空有两种完全不同的含义：
+          「查过了，很干净」和「压根查不了」。不区分的话，用户看到的画面
+          跟前者一模一样，就会以为系统帮他检查过了。
+        */}
+        {noTextLayer ? (
+          <div className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+            这是扫描件，<strong>自动检测用不了</strong> —— 没有文字层就没法找金额和账号。
+            <span className="mt-0.5 block text-xs text-amber-800/90">
+              请自己逐页看一遍、手工框选。金额常写两遍（大写一遍、数字一遍），别只涂了其中一个。
+            </span>
+          </div>
+        ) : (
+          hints.length > 0 && (
           <div
             className={cx(
               'flex flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-sm ring-1',
@@ -185,7 +200,8 @@ export function RedactionDialog({
                 一键涂掉这 {remaining.length} 处
               </Button>
             )}
-          </div>
+            </div>
+          )
         )}
 
         <div className="flex flex-wrap items-center justify-between gap-2">

@@ -238,7 +238,8 @@ export function renderPagePreviews(input: LoadInput): PagePreview[] {
         imageBase64: Buffer.from(pix.asPNG()).toString('base64'),
         width: pix.getWidth(),
         height: pix.getHeight(),
-        sensitive: [], // 直传的图片没有文本层，检测不了
+        hasTextLayer: false, // 直传的图片没有文本层，检测不了
+        sensitive: [],
       },
     ]
   }
@@ -274,11 +275,15 @@ export function renderPagePreviews(input: LoadInput): PagePreview[] {
     const page = doc.loadPage(p)
     const [bx0, by0, bx1, by1] = page.getBounds()
     const pix = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false, true)
+    // 判定跟 loadPdf() 用同一条线：这一页抽不出像样的文字就是扫描页。
+    // 界面靠它区分「检测过没发现」和「压根没法检测」。
+    const pageText = extractPageTextRedacted(page, [])
     previews.push({
       pageIndex: p,
       imageBase64: Buffer.from(pix.asPNG()).toString('base64'),
       width: pix.getWidth(),
       height: pix.getHeight(),
+      hasTextLayer: pageText.trim().length >= TEXT_LAYER_MIN_CHARS_PER_PAGE,
       // 扫描件没有文本层，detectSensitive 自然返回空数组
       sensitive: detectSensitive(page, bx1 - bx0, by1 - by0),
     })
