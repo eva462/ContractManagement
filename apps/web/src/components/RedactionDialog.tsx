@@ -9,7 +9,11 @@ import { Modal } from './overlays'
 import { Button, cx } from './ui'
 
 /**
- * 涂抹界面：在页面预览图上拉矩形，框住的内容不会发给识别服务。
+ * 涂抹界面：在页面预览图上拉矩形，框住的内容不会发给 AI。
+ *
+ * 两个地方用它：识别前脱敏（`purpose="extract"`）、上传合同正本时脱敏
+ * （`purpose="attach"`）。两者的差别只在文案 —— 前者立刻拿去识别，
+ * 后者存起来，等提交审核时风险审查沿用。
  *
  * ⚠️ 这里画的框**不是**盖在 PDF 上的黑块 —— 坐标会送到服务端，
  * 由 extraction/redact.ts 把对应内容从「送去识别的副本」里真的抠掉
@@ -19,20 +23,52 @@ import { Button, cx } from './ui'
 /** 拉得太小的当误触，不产生涂抹框 */
 const MIN_SIZE = 0.008
 
+/** 同一个界面服务两个场景，差别只在文案 */
+const COPY = {
+  extract: {
+    title: '涂抹后再识别',
+    skip: '不涂抹，直接识别',
+    skipHint: '整份原样发给识别服务',
+    confirm: (n: number) => (n > 0 ? `涂抹 ${n} 处并识别` : '开始识别'),
+    consequence: (
+      <>
+        框住的部分<strong>不会发给识别服务</strong>，识别结果里这些字段会留空，保存前手工填就行。
+      </>
+    ),
+    scope: '涂抹只影响送去识别的副本 —— 存进系统的合同原件是完整的。',
+  },
+  attach: {
+    title: '涂抹后再上传',
+    skip: '不涂抹，直接上传',
+    skipHint: '整份正文都会发给 AI 审查',
+    confirm: (n: number) => (n > 0 ? `涂抹 ${n} 处并上传` : '直接上传'),
+    consequence: (
+      <>
+        框住的部分<strong>不会发给 AI 风险审查</strong>。提交审核时的自动审查会跳过这些内容。
+      </>
+    ),
+    scope: '涂抹只影响送去审查的副本 —— 存进系统的正本文件完整保留，下载和预览都看得到。',
+  },
+} as const
+
 export function RedactionDialog({
   open,
   fileName,
   pages,
+  purpose = 'extract',
   onCancel,
   onConfirm,
 }: {
   open: boolean
   fileName: string
   pages: PagePreview[]
+  /** 这次涂抹是为了什么 —— 只影响文案 */
+  purpose?: keyof typeof COPY
   onCancel: () => void
-  /** 确认后把涂抹区交出去，交给识别接口 */
+  /** 确认后把涂抹区交出去 */
   onConfirm: (rects: RedactionRect[]) => void
 }): ReactNode {
+  const copy = COPY[purpose]
   const [rects, setRects] = useState<RedactionRect[]>([])
   const [drawing, setDrawing] = useState<RedactionRect | null>(null)
   const startRef = useRef<{ x: number; y: number; page: number } | null>(null)
@@ -137,16 +173,16 @@ export function RedactionDialog({
     <Modal
       open={open}
       width="lg"
-      title="涂抹后再识别"
+      title={copy.title}
       onClose={onCancel}
       footer={
         <>
           <Button onClick={onCancel}>取消</Button>
-          <Button onClick={() => onConfirm([])} title="整份原样发给识别服务">
-            不涂抹，直接识别
+          <Button onClick={() => onConfirm([])} title={copy.skipHint}>
+            {copy.skip}
           </Button>
           <Button variant="primary" onClick={() => onConfirm(rects)}>
-            {total > 0 ? `涂抹 ${total} 处并识别` : '开始识别'}
+            {copy.confirm(total)}
           </Button>
         </>
       }
@@ -154,10 +190,8 @@ export function RedactionDialog({
       <div className="flex flex-col gap-3">
         <div className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800 ring-1 ring-sky-200">
           在页面上<strong>按住拖动</strong>框选不想发出去的内容（金额、账号、证件号）。
-          框住的部分<strong>不会发给识别服务</strong>，识别结果里这些字段会留空，保存前手工填就行。
-          <span className="mt-1 block text-xs text-sky-700/90">
-            涂抹只影响送去识别的副本 —— 存进系统的合同原件是完整的。
-          </span>
+          {copy.consequence}
+          <span className="mt-1 block text-xs text-sky-700/90">{copy.scope}</span>
         </div>
 
         {/*

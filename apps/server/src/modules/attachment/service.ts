@@ -7,6 +7,7 @@ import {
   ATTACHMENT_TYPE_LABEL,
   ErrorCode,
   PREVIEWABLE_MIMES,
+  parseRedactions,
   type AttachmentDto,
   type AttachmentType,
   type ContractStatus,
@@ -31,6 +32,7 @@ interface AttachmentRow {
   mimeType: string
   attachmentType: string
   uploadedAt: Date
+  redactions?: unknown
   uploadedBy?: { id: string; username: string; displayName: string; role: string } | null
 }
 
@@ -43,6 +45,7 @@ export function toAttachmentDto(row: AttachmentRow): AttachmentDto {
     mimeType: row.mimeType,
     attachmentType: row.attachmentType as AttachmentType,
     previewable: (PREVIEWABLE_MIMES as readonly string[]).includes(row.mimeType),
+    redactionCount: parseRedactions(row.redactions).length,
     uploadedBy: toUserBrief(row.uploadedBy),
     uploadedAt: row.uploadedAt.toISOString(),
   }
@@ -154,7 +157,11 @@ export async function uploadAttachment(
         action: 'UPLOAD',
         userId: actor.id,
         userName: actor.displayName,
-        summary: `${actor.displayName} 上传了附件「${input.fileName}」（${ATTACHMENT_TYPE_LABEL[input.attachmentType]}）`,
+        // 涂抹了多少处要留痕 —— 这关系到「哪些内容被送去了第三方」，
+        // 事后要能查。但**绝不记涂抹的内容本身**，那等于把敏感信息抄进日志。
+        summary:
+          `${actor.displayName} 上传了附件「${input.fileName}」（${ATTACHMENT_TYPE_LABEL[input.attachmentType]}）` +
+          (input.redactions?.length ? `，涂抹了 ${input.redactions.length} 处` : ''),
         changes: {
           attachment: {
             before: null,

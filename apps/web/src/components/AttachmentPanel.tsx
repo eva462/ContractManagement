@@ -6,13 +6,22 @@ import {
   formatFileSize,
   type AttachmentDto,
   type AttachmentType,
+  type PagePreview,
+  type RedactionRect,
 } from '@contract/shared'
 import { ApiError, requestBlob } from '../api/client'
-import { attachmentApi } from '../api/resources'
+import { attachmentApi, extractionApi } from '../api/resources'
 import { ConfirmDialog, Modal, useToast } from './overlays'
+import { RedactionDialog } from './RedactionDialog'
 import { Button, Card, EmptyState, Select, Spinner, cx } from './ui'
 
 const ACCEPT = ALLOWED_FILE_TYPES.map((t) => t.ext).join(',')
+
+/**
+ * 能在上传前涂抹的类型 —— 得先能渲染成图给人画框。
+ * 跟识别那边的 supportedMimes 一致（PDF + 常见图片）。
+ */
+const REDACTABLE_MIMES = ['application/pdf', 'image/jpeg', 'image/png']
 const TYPE_HINT = [...new Set(ALLOWED_FILE_TYPES.map((t) => t.label))].join(' / ')
 
 export function AttachmentPanel({
@@ -37,6 +46,7 @@ export function AttachmentPanel({
   const [deleting, setDeleting] = useState(false)
   const [preview, setPreview] = useState<{ att: AttachmentDto; url: string } | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [redacting, setRedacting] = useState<{ file: File; pages: PagePreview[] } | null>(null)
 
   const reload = (signal?: AbortSignal): Promise<void> =>
     attachmentApi
@@ -63,18 +73,55 @@ export function AttachmentPanel({
     }
   }, [preview])
 
+  /**
+   * 选了文件之后。
+   *
+   * **合同正本要先过一遍涂抹**：提交审核时 AI 风险审查读的就是这一份，
+   * 不给涂抹的机会，金额账号就会原样发给服务商。其余分类（补充协议、
+   * 发票之类）不进审查，直接传。
+   */
   const onPick = async (file: File | undefined): Promise<void> => {
     if (!file) return
+
+    if (type === 'ORIGINAL' && REDACTABLE_MIMES.includes(file.type)) {
+      setUploading(true)
+      try {
+        // 纯本地渲染，不出网 —— 只是把文件画成图给人框
+        const { data } = await extractionApi.preview(file)
+        setRedacting({ file, pages: data })
+        return
+      } catch (err) {
+        // 渲染不了（加密、损坏、超页数）就退回直接上传，别把人卡在这
+        toast.error(
+          err instanceof ApiError
+            ? `${err.message}（将直接上传，不做涂抹）`
+            : '无法预览，将直接上传',
+        )
+      } finally {
+        setUploading(false)
+        if (fileRef.current) fileRef.current.value = ''
+      }
+    }
+
+    await doUpload(file, [])
+  }
+
+  const doUpload = async (file: File, redactions: RedactionRect[]): Promise<void> => {
     setUploading(true)
     try {
-      await attachmentApi.upload(contractId, file, type)
-      toast.success(`「${file.name}」已上传`)
+      await attachmentApi.upload(contractId, file, type, redactions)
+      toast.success(
+        redactions.length > 0
+          ? `「${file.name}」已上传，涂抹了 ${redactions.length} 处`
+          : `「${file.name}」已上传`,
+      )
       await reload()
       onChanged?.()
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : '上传失败')
     } finally {
       setUploading(false)
+      setRedacting(null)
       if (fileRef.current) fileRef.current.value = ''
     }
   }
@@ -193,6 +240,17 @@ export function AttachmentPanel({
                   {formatFileSize(a.fileSize)}
                   <span className="mx-1.5">·</span>
                   {a.uploadedBy?.displayName ?? '未知'} 于 {a.uploadedAt.slice(0, 10)}
+                  {a.redactionCount > 0 && (
+                    <>
+                      <span className="mx-1.5">·</span>
+                      <span
+                        className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-800 ring-1 ring-amber-200"
+                        title="这些区域不会发给 AI 审查。存档的文件本身是完整的。"
+                      >
+                        已涂抹 {a.redactionCount} 处
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
               <div className={cx('flex shrink-0 items-center gap-1', busyId === a.id && 'opacity-50')}>
@@ -252,6 +310,20 @@ export function AttachmentPanel({
         busy={deleting}
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <RedactionDialog
+        open={redacting !== null}
+        fileName={redacting?.file.name ?? ''}
+        pages={redacting?.pages ?? []}
+        purpose="attach"
+        onCancel={() => {
+          setRedacting(null)
+          if (fileRef.current) fileRef.current.value = ''
+        }}
+        onConfirm={(rects) => {
+          if (redacting) void doUpload(redacting.file, rects)
+        }}
       />
     </Card>
   )

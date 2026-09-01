@@ -370,6 +370,10 @@ async function main() {
     'base64',
   )
   const uploadTarget = seeded.find((c) => c.owner?.username === 'staff' && c.status === 'ACTIVE')
+  // 这一节建的附件都记下来，节末删干净。**冒烟必须能在同一个库上反复跑** ——
+  // 每轮留几个附件的话，跑够 20 轮就撞上「每份合同最多 20 个附件」，
+  // 后面所有断言跟着一起垮（踩过）。
+  const createdAttachments = []
 
   const fd = new FormData()
   fd.append('attachmentType', 'ORIGINAL')
@@ -379,6 +383,7 @@ async function main() {
   check('保留原始中文文件名', up.body?.data?.fileName === '合同扫描件 第1页.png')
   check('PNG 标记为可预览', up.body?.data?.previewable === true)
   const attId = up.body?.data?.id
+  if (attId) createdAttachments.push(attId)
 
   const fdExe = new FormData()
   fdExe.append('file', new Blob([Buffer.from('MZ')], { type: 'application/x-msdownload' }), 'virus.exe')
@@ -400,17 +405,65 @@ async function main() {
   fdDup.append('file', new Blob([png], { type: 'image/png' }), '同一张图 副本.png')
   const upDup = await call('POST', `/contracts/${uploadTarget.id}/attachments`, { token: staff, body: fdDup })
   check('同内容不同文件名可重复上传（内容去重）', upDup.status === 201)
+  if (upDup.body?.data?.id) createdAttachments.push(upDup.body.data.id)
 
   const delAtt = await call('DELETE', `/attachments/${upDup.body.data.id}`, { token: staff })
   check('删除其中一个副本成功', delAtt.status === 200)
   const stillThere = await call('GET', `/attachments/${attId}/download`, { token: staff, raw: true })
   check('另一条引用同一内容的附件仍可下载（去重删除没误删）', stillThere.status === 200)
 
+  // 涂抹随附件一起存下来 —— 风险审查靠它决定哪些内容不发给服务商。
+  // **字段排在 file 后面**，服务端必须用 req.parts() 才读得到（用 file.fields
+  // 读永远是 undefined，涂抹会静默失效）。这里就是在守那条。
+  const fdRed = new FormData()
+  fdRed.append('attachmentType', 'ORIGINAL')
+  fdRed.append('file', new Blob([png], { type: 'image/png' }), '涂过的正本.png')
+  fdRed.append('redactions', JSON.stringify([
+    { page: 0, x: 0.1, y: 0.1, w: 0.3, h: 0.05 },
+    { page: 0, x: 0.5, y: 0.4, w: 0.2, h: 0.04 },
+  ]))
+  const upRed = await call('POST', `/contracts/${uploadTarget.id}/attachments`, { token: staff, body: fdRed })
+  check('带涂抹的附件上传成功', upRed.status === 201, JSON.stringify(upRed.body?.error ?? ''))
+  if (upRed.body?.data?.id) createdAttachments.push(upRed.body.data.id)
+  check(
+    '[1m涂抹区跟着附件存下来了（字段排在 file 后面也读得到）[0m',
+    upRed.body?.data?.redactionCount === 2,
+    `实际 ${upRed.body?.data?.redactionCount}`,
+  )
+
+  const listAfterRed = await call('GET', `/contracts/${uploadTarget.id}/attachments`, { token: staff })
+  const redRow = (listAfterRed.body?.data ?? []).find((a) => a.id === upRed.body?.data?.id)
+  check('列表里也读得到涂抹处数', redRow?.redactionCount === 2, `实际 ${redRow?.redactionCount}`)
+  check('没涂抹的附件是 0 处', (listAfterRed.body?.data ?? []).find((a) => a.id === attId)?.redactionCount === 0)
+
+  const redLogs = await call('GET', `/contracts/${uploadTarget.id}/audit-logs?pageSize=20`, { token: staff })
+  const redEntry = (redLogs.body?.data ?? []).find((e) => (e.summary ?? '').includes('涂过的正本.png'))
+  check('留痕里记了涂抹处数', (redEntry?.summary ?? '').includes('涂抹了 2 处'), redEntry?.summary)
+
+  const fdBadRed = new FormData()
+  fdBadRed.append('attachmentType', 'ORIGINAL')
+  fdBadRed.append('file', new Blob([png], { type: 'image/png' }), '涂抹参数是垃圾.png')
+  fdBadRed.append('redactions', '这不是 JSON')
+  const upBadRed = await call('POST', `/contracts/${uploadTarget.id}/attachments`, { token: staff, body: fdBadRed })
+  check('涂抹参数非法时按未涂处理，不让上传失败', upBadRed.status === 201 && upBadRed.body?.data?.redactionCount === 0)
+  if (upBadRed.body?.data?.id) createdAttachments.push(upBadRed.body.data.id)
+
   const closedContract = seeded.find((c) => c.status === 'CLOSED')
   const fdClosed = new FormData()
   fdClosed.append('file', new Blob([png], { type: 'image/png' }), 'x.png')
   const upClosed = await call('POST', `/contracts/${closedContract.id}/attachments`, { token: admin, body: fdClosed })
   check('已完结合同不能上传附件', errCode(upClosed) === 'CONTRACT_READONLY')
+
+  // 收尾：把这一节建的附件删掉。留痕记录不受影响（审计只增不删），
+  // 下一节验的就是那些留痕还在。
+  for (const id of createdAttachments) {
+    await call('DELETE', `/attachments/${id}`, { token: staff })
+  }
+  const afterCleanup = await call('GET', `/contracts/${uploadTarget.id}/attachments`, { token: staff })
+  check(
+    '冒烟建的附件都清干净了（保证能反复跑）',
+    !(afterCleanup.body?.data ?? []).some((a) => createdAttachments.includes(a.id)),
+  )
 
   /* ── F 操作留痕 ───────────────────────────────────────────────── */
   section('F · 操作留痕')

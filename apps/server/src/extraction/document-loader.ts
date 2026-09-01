@@ -57,6 +57,21 @@ export interface LoadInput {
 const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
 /**
+ * 解码直传的图片。
+ *
+ * mupdf 解不开时抛的是 `zlib error: invalid bit length repeat` 这类内部报错，
+ * 直接冒出去会变成 500「服务器内部错误」加一句英文 —— 对用户毫无意义。
+ * PDF 那条路径早就翻译过了，图片这条也得翻。
+ */
+function decodeImage(buffer: Buffer): mupdf.Image {
+  try {
+    return new mupdf.Image(buffer)
+  } catch {
+    throw badRequest(ErrorCode.VALIDATION_FAILED, '图片无法打开，文件可能已损坏或不是真的图片')
+  }
+}
+
+/**
  * 把涂抹区域涂进直传的图片里。
  *
  * **别把 input.buffer 原样返回。** PDF 那条路径涂抹是在渲染时做的，而直传
@@ -69,7 +84,7 @@ const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 function redactImage(buffer: Buffer, redactions?: RedactionRect[]): Buffer {
   if (!redactions || redactions.length === 0) return buffer
 
-  const pixmap = new mupdf.Image(buffer).toPixmap()
+  const pixmap = decodeImage(buffer).toPixmap()
   const width = pixmap.getWidth()
   const height = pixmap.getHeight()
   // 图片本身就是「页面」，坐标系即像素，所以 scale = 1、原点 = (0,0)
@@ -231,7 +246,7 @@ const PREVIEW_SCALE = 1.2
 export function renderPagePreviews(input: LoadInput): PagePreview[] {
   if (IMAGE_MIMES.includes(input.mimeType)) {
     // 直传的图片本身就是预览图
-    const pix = new mupdf.Image(input.buffer).toPixmap()
+    const pix = decodeImage(input.buffer).toPixmap()
     return [
       {
         pageIndex: 0,

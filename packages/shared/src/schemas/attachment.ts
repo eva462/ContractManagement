@@ -15,6 +15,11 @@ export interface AttachmentDto {
   attachmentType: AttachmentType
   /** 前端据此决定给「预览」还是只给「下载」 */
   previewable: boolean
+  /**
+   * 上传时涂抹了几处。**存档的这份文件是完整的** —— 涂抹只作用于送去
+   * AI 处理的副本。列表里显示出来，让人一眼看出哪些正本受了保护。
+   */
+  redactionCount: number
   uploadedBy: UserBrief | null
   uploadedAt: string
 }

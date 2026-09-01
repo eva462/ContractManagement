@@ -84,10 +84,23 @@ export const attachmentApi = {
   list: (contractId: string, signal?: AbortSignal) =>
     request<AttachmentDto[]>(`/contracts/${contractId}/attachments`, { signal }),
 
-  upload: (contractId: string, file: File, attachmentType: AttachmentType) => {
+  /**
+   * 上传附件。
+   *
+   * `redactions` 是**送去 AI 处理时要抠掉的区域** —— 存档的这份文件完整保留。
+   * 服务端用 req.parts() 遍历，所以它排在 file 后面也读得到（用 file.fields
+   * 会读不到，这个坑踩过）。
+   */
+  upload: (
+    contractId: string,
+    file: File,
+    attachmentType: AttachmentType,
+    redactions: RedactionRect[] = [],
+  ) => {
     const fd = new FormData()
     fd.append('attachmentType', attachmentType)
     fd.append('file', file, file.name)
+    if (redactions.length > 0) fd.append('redactions', JSON.stringify(redactions))
     return request<AttachmentDto>(`/contracts/${contractId}/attachments`, {
       method: 'POST',
       formData: fd,

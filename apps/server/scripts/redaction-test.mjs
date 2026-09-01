@@ -21,6 +21,7 @@ process.chdir(resolve(here, '..'))
 const root = resolve(here, '../../..')
 
 const { loadDocument } = await import('../src/extraction/document-loader.ts')
+const { parseRedactions } = await import('@contract/shared')
 
 let passed = 0
 let failed = 0
@@ -327,6 +328,35 @@ async function main() {
     stillThere.length > 0 ? `❗仍然在：${stillThere.join('、')}` : '',
   )
   check('但合同其余内容还在', allText.includes('增值税') && allText.length > 500, `剩余 ${allText.length} 字`)
+  /* ── E 存进库再读出来 ────────────────────── */
+  section('E · 附件里存的涂抹，风险审查读得回来')
+
+  // 风险审查读的是 contract_attachments.redactions（Postgres 的 jsonb）。
+  // 中间隔了一次 JSON 序列化/反序列化，这一节验的就是这条链没断 ——
+  // 存进去、取出来、再喂给 loadDocument，被涂的内容依然不在载荷里。
+  const roundTripped = parseRedactions(JSON.parse(JSON.stringify([box])))
+  check('存进 jsonb 再读出来，涂抹区还在', roundTripped.length === 1, `${roundTripped.length} 处`)
+
+  const fromDb = loadDocument({
+    buffer: textPdf,
+    mimeType: 'application/pdf',
+    fileName: 'a.pdf',
+    redactions: roundTripped,
+  })
+  check(
+    '[1m用库里读出来的涂抹区，金额同样不在审查载荷里[0m',
+    fromDb.mode === 'text' && !fromDb.text.includes(AMOUNT),
+    fromDb.mode === 'text' && fromDb.text.includes(AMOUNT) ? '❗金额还在' : '',
+  )
+  check(
+    '合同其余内容照常送去审查',
+    fromDb.mode === 'text' && fromDb.text.includes('增值税') && fromDb.text.length > 500,
+  )
+
+  // 库里是 NULL（从没涂过）或废数据时不能炸，按未涂处理
+  check('库里是 null 时按未涂处理', parseRedactions(null).length === 0)
+  check('库里是废数据时也按未涂处理', parseRedactions('{坏掉的}').length === 0)
+
 
   console.log(`\n${'─'.repeat(60)}`)
   if (failed === 0) console.log(`\x1b[32m\x1b[1m全部通过\x1b[0m  ${passed} 项`)
