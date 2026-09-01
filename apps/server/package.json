@@ -23,6 +23,7 @@
     "demo:end": "tsx scripts/demo-tunnel.mjs end",
     "postinstall": "prisma generate",
     "test:redaction": "tsx scripts/redaction-test.mjs",
+    "test:review": "tsx scripts/review-test.mjs",
     "show:redaction": "tsx scripts/show-redaction.mjs"
   },
   "dependencies": {

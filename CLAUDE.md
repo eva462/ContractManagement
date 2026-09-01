@@ -64,6 +64,8 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 - **multipart 里跟文件同来的字段要用 `req.parts()` 遍历，别用 `file.fields`。** 后者只含文件**之前**的字段，浏览器 FormData 里 redactions 排在 file 后面，用 `file.fields` 读永远是 undefined —— 涂抹会静默失效、内容照样出网。
 - **PDF 解析/渲染/切块永远在本地做**（`extraction/document-loader.ts`），刻意不在可替换边界内——换 AI 供应商时这部分不受影响。
 - **提示词里的 JSON 示例会被模型当成字段白名单。** 实测：示例里只写 8 个字段时，另外 3 个明明在原文里也不输出（准确率 73%）。字段表和示例**两处都要改**，只改一处会静默漏识别。
+- **`loadDocument()` 的每条分支都必须套用 `redactions`。** 直传图片那条分支早先直接把 `input.buffer` 透传出去——界面上框了几处、提示「已涂抹 N 处」，送给模型的却是一个像素都没动的原图。涂抹是安全边界，**静默失效比不做还糟**。`test:redaction` 的 B2 节按字节和像素两个层面守着这条。
+- **「原文依据」必须回原文核一遍**（`evidenceFoundIn()`）。只在 schema 里要求 evidence 必填是拦不住幻觉的——模型完全能编一句像模像样的话填进去。归一化后做子串匹配，对不上就丢。**别改成模糊匹配**，一旦「差不多就算」，编造的句子就能蒙混过关，这道闸也就白设了。`npm run test:review` 守着这条。
 - **AI 风险审查是参考，不是关卡。** 结果只在详情页展示，**不阻断任何状态流转**，跑失败也只写进那条 review 记录。甲方原话：原本就有合同审核人员，AI 只是简化条款审核工作。别把它做成审批前置条件。
 - **没有原文依据的风险点一律丢弃**（`RawFindingSchema.evidence` 必填且 ≥4 字）。模型编不出合同里没有的句子 —— 这是防幻觉最有效的一招，别改成可选。单条不合规只丢那一条，不让整次审查作废。
 - **审查在后台跑，`scheduleReview()` 刻意不 await。** 实测一次真实审查 50.7 秒，让用户点完「提交审核」干等 50 秒是不可接受的。同理它放在事务**外面** —— 事务已提交，审查读到的一定是新状态。
@@ -76,7 +78,8 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 npm run smoke -w apps/server           # 接口冒烟 126 项（需先 npm run dev）
 npm run test:normalize -w apps/server  # 金额/日期归一化 25 项
 npm run test:extraction -w apps/server # 内容识别端到端 40 项（假服务，不出网）
-npm run test:redaction -w apps/server  # 涂抹的防泄漏验证 25 项（纯本地）
+npm run test:redaction -w apps/server  # 涂抹的防泄漏验证 32 项（纯本地）
+npm run test:review -w apps/server     # 审查的防幻觉验证 15 项（纯本地，不调模型）
 npm run verify:live -w apps/server     # 真实调用验准确率（会计费）
 npm run bench:parse -w apps/server     # 量本地 PDF 解析耗时
 ```
@@ -105,6 +108,7 @@ npm run bench:parse -w apps/server     # 量本地 PDF 解析耗时
 2. **用户管理界面** —— 后端 5 个接口都通了，只缺界面。设置页已有占位入口。
 3. **「AI 生成候选规则」** —— `review_rules.isDraft` 和界面上的「AI 建议 · 待确认」标记都已就位，缺生成那一步。目前 10 条通用要点是手写的。
 4. **按合同类型分审查模板** —— 表结构支持（`contractType` 可空），界面只维护通用那一套。
-5. 支付流程（付款计划、发票、实付跟踪）—— 明确不在本期
+5. 🔴 **附件的涂抹没接上（安全相关）** —— `contract_attachments.redactions` 后端读得好好的，但前端 `attachmentApi.upload()` 从来没发过这个参数，附件上传也没有涂抹入口，所以这个字段永远是空的。**后果是风险审查发出去的是合同完整正文**，识别阶段涂掉的内容又原样出网一遍。详见 `docs/design/04` §7。
+6. 支付流程（付款计划、发票、实付跟踪）—— 明确不在本期
 
 已知未做：导出 Excel、全局审计查询页。

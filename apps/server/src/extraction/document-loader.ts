@@ -56,6 +56,28 @@ export interface LoadInput {
 
 const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
+/**
+ * 把涂抹区域涂进直传的图片里。
+ *
+ * **别把 input.buffer 原样返回。** PDF 那条路径涂抹是在渲染时做的，而直传
+ * 图片没有渲染这一步 —— 早先这里直接把原图透传出去，界面上框了几处、提示
+ * 「已涂抹 N 处」，送给模型的却是**一个像素都没动的原图**。涂抹是安全边界，
+ * 静默失效比不做还糟。
+ *
+ * 没有涂抹区时原样返回，避免白白解一次码（也就不会把 JPEG 转成 PNG）。
+ */
+function redactImage(buffer: Buffer, redactions?: RedactionRect[]): Buffer {
+  if (!redactions || redactions.length === 0) return buffer
+
+  const pixmap = new mupdf.Image(buffer).toPixmap()
+  const width = pixmap.getWidth()
+  const height = pixmap.getHeight()
+  // 图片本身就是「页面」，坐标系即像素，所以 scale = 1、原点 = (0,0)
+  // 直传图片只有一页，页号恒为 0
+  paintRedactions(pixmap, toPageRects(redactions, 0, width, height), 1, 0, 0)
+  return Buffer.from(pixmap.asPNG())
+}
+
 export function loadDocument(input: LoadInput): LoadedDocument {
   if (input.mimeType === 'application/pdf') return loadPdf(input)
   if (IMAGE_MIMES.includes(input.mimeType)) {
@@ -65,7 +87,14 @@ export function loadDocument(input: LoadInput): LoadedDocument {
       mode: 'vision',
       pageCount: 1,
       fileName: input.fileName,
-      images: [{ data: input.buffer, mimeType: 'image/png', pageIndex: 0, tileIndex: 0 }],
+      images: [
+        {
+          data: redactImage(input.buffer, input.redactions),
+          mimeType: 'image/png',
+          pageIndex: 0,
+          tileIndex: 0,
+        },
+      ],
     }
   }
   throw badRequest(

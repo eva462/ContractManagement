@@ -114,31 +114,44 @@ export async function listTemplates(): Promise<ReviewTemplateDto[]> {
 async function loadContractText(
   contractId: string,
 ): Promise<{ text: string; redactedCount: number } | null> {
-  const original = await db.contractAttachment.findFirst({
+  // **要遍历所有正本，不能只看最新那一份。** 归档时会再传一份签署后的扫描件，
+  // 它会变成最新的 ORIGINAL —— 只取最新的话，合同一归档，重新审查就永远失败，
+  // 哪怕当初那份电子版还好好地躺在附件里。
+  const originals = await db.contractAttachment.findMany({
     where: { contractId, attachmentType: 'ORIGINAL' },
     orderBy: { uploadedAt: 'desc' },
   })
-  if (!original) return null
 
-  // 存储层只给流（S3 之类的实现也是流），这里读成 buffer 交给 mupdf
-  const chunks: Buffer[] = []
-  const stream = await storage.createReadStream(original.storageKey)
-  for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer))
-  const buffer = Buffer.concat(chunks)
+  for (const original of originals) {
+    // 存储层只给流（S3 之类的实现也是流），这里读成 buffer 交给 mupdf
+    const chunks: Buffer[] = []
+    const stream = await storage.createReadStream(original.storageKey)
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk as Buffer))
+    const buffer = Buffer.concat(chunks)
 
-  const redactions = parseRedactions(original.redactions)
+    const redactions = parseRedactions(original.redactions)
 
-  const doc = loadDocument({
-    buffer,
-    mimeType: original.mimeType,
-    fileName: original.fileName,
-    redactions,
-  })
+    let doc
+    try {
+      doc = loadDocument({
+        buffer,
+        mimeType: original.mimeType,
+        fileName: original.fileName,
+        redactions,
+      })
+    } catch {
+      // 这份打不开（.docx、加密 PDF、超 30 页、文件损坏）就试下一份。
+      // **不能让异常冒出去** —— runReview 里那条 RUNNING 记录会永远卡在
+      // RUNNING，前端每 4 秒轮询一次，转圈转到天荒地老。
+      continue
+    }
 
-  // 扫描件走图片路径，这里拿不到文本 —— 审查暂时只支持有文本层的合同。
-  // 图片审查要把切图一起送过去，成本和提示词都不一样，留到以后再说。
-  if (doc.mode !== 'text') return null
-  return { text: doc.text, redactedCount: redactions.length }
+    // 扫描件走图片路径，这里拿不到文本 —— 审查暂时只支持有文本层的合同。
+    // 图片审查要把切图一起送过去，成本和提示词都不一样，留到以后再说。
+    if (doc.mode === 'text') return { text: doc.text, redactedCount: redactions.length }
+  }
+
+  return null
 }
 
 /* ── 执行审查 ───────────────────────────────────────────────────────── */
@@ -204,6 +217,41 @@ ${contractText.slice(0, 100_000)}
  * 先建一条 RUNNING 记录，跑完改 DONE/FAILED。这样界面随时能显示进度，
  * 服务重启导致的半途而废也看得出来（会一直停在 RUNNING，可手动重跑）。
  */
+/**
+ * 把原文和「原文依据」都归一化后再比对。
+ *
+ * 直接字符串相等会误杀：PDF 抽出来的文字带各种换行和空格，模型引用时通常
+ * 会顺手抹平。所以两边都去掉所有空白，并把中英文标点对齐再比。
+ *
+ * 宁可稍微宽松一点，也不要把**真实存在**的依据判成幻觉 —— 那会让用户
+ * 反过来不信任这道闸。但绝不能宽松到「差不多就算」：模糊匹配一旦引入，
+ * 编造的句子就能蒙混过关，这道闸也就白设了。
+ */
+export function normalizeForMatch(s: string): string {
+  return s
+    .replace(/\s+/g, '')
+    .replace(/[，,]/g, ',')
+    .replace(/[。.]/g, '.')
+    .replace(/[；;]/g, ';')
+    .replace(/[：:]/g, ':')
+    .replace(/[（(]/g, '(')
+    .replace(/[）)]/g, ')')
+    .replace(/[「」“”"']/g, '"')
+    .replace(/[–—\-]/g, '-')
+}
+
+/**
+ * 「原文依据」是不是真能在合同里找到。
+ *
+ * haystack 要先过一遍 normalizeForMatch，别在循环里重复归一化整篇正文。
+ */
+export function evidenceFoundIn(normalizedText: string, evidence: string): boolean {
+  const needle = normalizeForMatch(evidence)
+  // 太短的片段谁都能命中（比如「合同」两个字），等于没验
+  if (needle.length < 4) return false
+  return normalizedText.includes(needle)
+}
+
 export async function runReview(
   contractId: string,
   actorId: string | null,
@@ -271,14 +319,26 @@ export async function runReview(
   // 逐条校验。**没有原文依据的直接丢弃** —— 这是防幻觉最有效的一招。
   const list = Array.isArray(raw.findings) ? raw.findings : []
   const valid: RawFinding[] = []
-  let dropped = 0
+  let malformed = 0
+  let unfounded = 0
+  const haystack = normalizeForMatch(loaded.text)
   for (const item of list) {
     const parsed = RawFindingSchema.safeParse(item)
-    if (parsed.success) valid.push(parsed.data)
-    else dropped++
+    if (!parsed.success) {
+      malformed++
+      continue
+    }
+    // **光要求模型给 evidence 是不够的 —— 它完全可以编一句像模像样的。**
+    // 必须回头到原文里核一遍：对不上就是幻觉，丢掉。
+    if (!evidenceFoundIn(haystack, parsed.data.evidence)) {
+      unfounded++
+      console.warn(`[review] 依据在原文里找不到，丢弃：${parsed.data.evidence.slice(0, 40)}`)
+      continue
+    }
+    valid.push(parsed.data)
   }
-  if (dropped > 0) {
-    console.warn(`[review] 丢弃了 ${dropped} 条没有原文依据或格式不合规的风险点`)
+  if (malformed > 0 || unfounded > 0) {
+    console.warn(`[review] 丢弃 ${malformed} 条格式不合规、${unfounded} 条依据对不上原文`)
   }
 
   valid.sort((a, b) => RISK_SEVERITY_RANK[a.severity] - RISK_SEVERITY_RANK[b.severity])

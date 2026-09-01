@@ -195,6 +195,50 @@ async function main() {
   const r3 = tile3 ? regionIsBlack(tile3.data, 0.1, 0.1, 0.8, 0.8) : { black: true, checked: 0 }
   check('没被涂的切图不受影响', !r3.black)
 
+  /* ── B2 直传图片 ─────────────────────────────────────────────── */
+  section('B2 · 直传图片（手机拍的、单张扫描图）')
+
+  // 拿刚渲染出来的切图当「用户直传的图片」——它是一张有合同内容的真 PNG
+  const rawPng = scanPlain.mode === 'vision' ? scanPlain.images[0].data : null
+  check('准备好一张直传用的 PNG', !!rawPng && rawPng.length > 1000, `${rawPng?.length ?? 0} 字节`)
+
+  const imgPlain = loadDocument({ buffer: rawPng, mimeType: 'image/png', fileName: 'c.png' })
+  check('直传图片走图像路径', imgPlain.mode === 'vision' && imgPlain.pageCount === 1)
+  check('不切块（单张图整张送）', imgPlain.mode === 'vision' && imgPlain.images.length === 1)
+
+  const imgRedacted = loadDocument({
+    buffer: rawPng,
+    mimeType: 'image/png',
+    fileName: 'c.png',
+    // 涂掉左半边
+    redactions: [{ page: 0, x: 0, y: 0, w: 0.5, h: 1 }],
+  })
+  const out = imgRedacted.mode === 'vision' ? imgRedacted.images[0].data : null
+
+  // 这一条是重点：早先这里把 input.buffer 原样透传，界面上框了、提示「已涂抹」，
+  // 送出去的却是一个像素都没动的原图。
+  check(
+    '[1m送出去的图跟原图不是同一份字节[0m',
+    !!out && !out.equals(rawPng),
+    out ? `原图 ${rawPng.length} → 涂后 ${out.length}` : '没拿到输出',
+  )
+
+  const left = out ? regionIsBlack(out, 0.05, 0.2, 0.35, 0.6) : { black: false, checked: 0 }
+  check(
+    '[1m被涂的半边确实是纯黑像素[0m',
+    left.black,
+    `检查了 ${left.checked} 个像素`,
+  )
+
+  const right = out ? regionIsBlack(out, 0.6, 0.2, 0.35, 0.6) : { black: true, checked: 0 }
+  check('没被涂的半边还在', !right.black)
+
+  const imgNoRects = loadDocument({ buffer: rawPng, mimeType: 'image/png', fileName: 'c.png' })
+  check(
+    '没有涂抹区时原样透传（不白解一次码）',
+    imgNoRects.mode === 'vision' && imgNoRects.images[0].data.equals(rawPng),
+  )
+
   /* ── C 边界 ─────────────────────────────────────────────────── */
   section('C · 边界情况')
 

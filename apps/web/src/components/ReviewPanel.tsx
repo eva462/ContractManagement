@@ -91,6 +91,15 @@ export function ReviewPanel({
 
   return (
     <Card title="AI 风险审查" actions={action}>
+      {/*
+        审查要把合同正文发给第三方模型。这个系统里「涂抹」是明确的安全边界，
+        那就不能让用户以为审查是在本地跑的 —— 说清楚，让人自己决定要不要点。
+      */}
+      <p className="mb-3 text-xs text-slate-600">
+        审查会把<strong>合同正本的文字内容</strong>发给 AI 服务商处理。涉密合同请先涂抹再上传正本，
+        或直接跳过 AI 审查走人工。
+      </p>
+
       {loading ? (
         <LoadingBlock />
       ) : !review ? (
@@ -98,8 +107,8 @@ export function ReviewPanel({
           title="还没有审查过"
           description={
             canRerun
-              ? '提交审核时会自动跑一次；也可以点右上角手动审查。需要合同正本附件是带文字的 PDF。'
-              : '提交审核时会自动跑一次。'
+              ? '提交审核时会自动跑一次；也可以点右上角手动审查。需要合同正本附件是带文字的 PDF —— 扫描件目前审不了。'
+              : '提交审核时会自动跑一次。需要合同正本附件是带文字的 PDF。'
           }
         />
       ) : review.status === 'RUNNING' ? (
@@ -166,7 +175,8 @@ export function ReviewPanel({
 
           <p className="border-t border-slate-200 pt-2 text-xs text-slate-600">
             以上是 AI 按审查要点给出的<strong>参考意见，不替代人工审核</strong>，也不影响合同流转。
-            每条都附了合同原文依据，请对照原件核实。审查要点可以在设置里调整。
+            每条依据都已回原文核对过，找不到出处的已被丢弃；仍请对照原件复核。
+            审查要点可以在设置里调整。
           </p>
         </div>
       )}
