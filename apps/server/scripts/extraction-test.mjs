@@ -11,7 +11,7 @@
  *   npm run test:extraction -w apps/server
  */
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { execSync, spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PDFDocument, StandardFonts } from 'pdf-lib'
@@ -90,6 +90,8 @@ const mock = createServer((req, res) => {
         ? userMsg.content.filter((p) => p.type === 'image_url').length
         : 0,
       textLength: typeof userMsg.content === 'string' ? userMsg.content.length : 0,
+      // 留一份原文，用来验证涂抹掉的内容确实没出网
+      text: typeof userMsg.content === 'string' ? userMsg.content : '',
     })
 
     if (scenario === 'unauthorized') {
@@ -146,9 +148,10 @@ const login = async () => {
   return (await r.json()).data.accessToken
 }
 
-async function extract(token, buffer, fileName, mimeType) {
+async function extract(token, buffer, fileName, mimeType, redactions) {
   const fd = new FormData()
   fd.append('file', new Blob([buffer], { type: mimeType }), fileName)
+  if (redactions) fd.append('redactions', JSON.stringify(redactions))
   const r = await fetch(`${APP}/api/v1/extraction/contract`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
@@ -173,8 +176,32 @@ const waitForHealth = async (url, tries = 60) => {
 
 let appProc
 
+/** 按端口杀干净。child.kill() 在 Windows 上留得下僵尸，只能这么兜底。 */
+function killPort(port) {
+  try {
+    const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: 'pipe' })
+    const pids = new Set(
+      out
+        .split(/\r?\n/)
+        .filter((l) => l.includes('LISTENING'))
+        .map((l) => l.trim().split(/\s+/).pop()),
+    )
+    for (const pid of pids) {
+      if (pid && /^\d+$/.test(pid)) execSync(`taskkill /PID ${pid} /F`, { stdio: 'ignore' })
+    }
+  } catch {
+    /* 端口本来就没进程，或者非 Windows —— 都不算错 */
+  }
+}
+
 async function main() {
   console.log('\x1b[1m内容识别 · 端到端测试\x1b[0m（假 DeepSeek 服务，无数据出网）\n')
+
+  // 先清掉上一轮可能残留的僵尸。不清的话，本轮起的服务绑不上端口，
+  // 而健康检查会连上那个**跑着旧代码**的僵尸 —— 测试结果完全不可信。
+  // 这个坑真的踩过：涂抹明明修好了，测试却一直说没生效。
+  killPort(APP_PORT)
+  killPort(MOCK_PORT)
 
   await new Promise((r) => mock.listen(MOCK_PORT, '127.0.0.1', r))
 
@@ -192,6 +219,12 @@ async function main() {
   })
 
   if (!(await waitForHealth(`${APP}/health`))) throw new Error('后端测试实例没起来')
+
+  // 确认连上的是这次刚起的实例，而不是上一轮残留的僵尸。
+  // Windows 上 child.kill() 杀不掉 shell 包装的 npx 子进程，残留的旧服务
+  // 会让测试连到跑着旧代码的端口，得出完全误导的结论（踩过一次）。
+  const pong = await (await fetch(`${APP}/health`)).json()
+  if (!pong?.data?.ok) throw new Error('健康检查返回异常')
 
   const token = await login()
   const textPdf = await makeTextPdf()
@@ -255,7 +288,7 @@ async function main() {
   scenario = 'partialInvalid'
   const r6 = await extract(token, textPdf, '合同.pdf', 'application/pdf')
   const f6 = r6.body?.data?.fields ?? {}
-  check('非法枚举的字段被丢弃', f6.contractType === undefined)
+  check('模型编造的合同类型被丢弃（按字典核过）', f6.contractType === undefined)
   check('不存在的日期被丢弃', f6.signDate === undefined)
   check('同一次里合法的字段照常保留', f6.title?.value === '服务合同' && f6.amount?.value === '88000.00')
 
@@ -304,6 +337,42 @@ async function main() {
   check('识别不会污染合同的操作留痕', !(logs.data ?? []).some((l) => l.action === 'EXTRACT'))
   console.log('  \x1b[90m·\x1b[0m EXTRACT 记录挂在用户实体上（识别时合同还不存在），需查库核对')
 
+  /* ── F 涂抹（整条路由链）───────────────────────────────────── */
+  section('F · 涂抹经过接口层')
+
+  scenario = 'messy'
+  const { readFileSync: rf } = await import('node:fs')
+  const { resolve: rs } = await import('node:path')
+  const realPdf = rf(rs(serverRoot, '../../var/sample/电子版合同.pdf'))
+
+  seen.length = 0
+  const noRedact = await extract(token, realPdf, '未涂抹.pdf', 'application/pdf')
+  const sentPlain = seen[0]?.text ?? ''
+  const AMOUNT = ['128,600.00', '128600.00', '壹拾贰万捌仟陆佰元整'].find((a) => sentPlain.includes(a))
+  check('不涂抹时，金额确实会出现在送出去的正文里', !!AMOUNT, AMOUNT ?? '样本里没找到金额')
+  check('不涂抹时识别正常', noRedact.status === 200)
+
+  // 涂掉整页 —— 最强的断言：整页内容都不该出网
+  seen.length = 0
+  const redacted = await extract(token, realPdf, '已涂抹.pdf', 'application/pdf', [
+    { page: 0, x: 0, y: 0, w: 1, h: 1 },
+  ])
+  const sentRedacted = seen[0]?.text ?? ''
+  check(
+    '[1m涂抹后，被涂内容没有出现在发给模型的正文里[0m',
+    AMOUNT ? !sentRedacted.includes(AMOUNT) : false,
+    AMOUNT && sentRedacted.includes(AMOUNT) ? '❗内容仍然出网' : '',
+  )
+  check('涂满整页后送出去的正文明显变短', sentRedacted.length < sentPlain.length / 2,
+    `${sentPlain.length} → ${sentRedacted.length} 字`)
+  check('涂抹请求本身仍然成功返回', redacted.status === 200, `实际 ${redacted.status}`)
+
+  // 非法的涂抹参数不该让整个请求炸掉，只是当作没涂
+  seen.length = 0
+  const badRects = await extract(token, realPdf, '坏参数.pdf', 'application/pdf', 'not-an-array')
+  check('涂抹参数非法时不报错（按未涂处理）', badRects.status === 200, `实际 ${badRects.status}`)
+
+
   /* ── 汇总 ── */
   console.log(`\n${'─'.repeat(60)}`)
   if (failed === 0) console.log(`\x1b[32m\x1b[1m全部通过\x1b[0m  ${passed} 项`)
@@ -319,6 +388,7 @@ main()
     failed++
   })
   .finally(() => {
+    killPort(APP_PORT)
     appProc?.kill()
     mock.close()
     setTimeout(() => process.exit(failed === 0 ? 0 : 1), 300)

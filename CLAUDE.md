@@ -54,6 +54,9 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 - **只有草稿能删。** 其他状态一律只能完结。已完结对所有人只读，ADMIN 也要先解除完结。
 - **前端隐藏按钮不算权限**，后端每个接口都会再判一次。
 - **AI 识别结果永远不直接入库**，只预填表单，人核对后走与手工录入完全相同的接口和校验。
+- **涂抹是安全边界，改 `extraction/redact.ts` 前先读 `docs/design/04` §2。** 画黑框不等于涂掉 —— 电子版 PDF 走文本层路径，界面画框对送出去的文字毫无影响，必须逐字符剔除。两条路径实现完全不同（文本剔字符／图像涂像素）。`npm run test:redaction` 在载荷层面守着这条。
+- **涂抹只作用于送去识别的副本，存档的 PDF 原件完整保留。** 否则归档合同缺了金额就没意义了。
+- **multipart 里跟文件同来的字段要用 `req.parts()` 遍历，别用 `file.fields`。** 后者只含文件**之前**的字段，浏览器 FormData 里 redactions 排在 file 后面，用 `file.fields` 读永远是 undefined —— 涂抹会静默失效、内容照样出网。
 - **PDF 解析/渲染/切块永远在本地做**（`extraction/document-loader.ts`），刻意不在可替换边界内——换 AI 供应商时这部分不受影响。
 - **提示词里的 JSON 示例会被模型当成字段白名单。** 实测：示例里只写 8 个字段时，另外 3 个明明在原文里也不输出（准确率 73%）。字段表和示例**两处都要改**，只改一处会静默漏识别。
 - **本地 PDF 解析不是瓶颈。** 实测 20 页抽文本 72ms、扫描件渲染切块 2.5s，而一次模型调用要 10–40 秒。想快只能换模型，拆页并行省不出东西。
@@ -63,12 +66,15 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 ```bash
 npm run smoke -w apps/server           # 接口冒烟 108 项（需先 npm run dev）
 npm run test:normalize -w apps/server  # 金额/日期归一化 25 项
-npm run test:extraction -w apps/server # 内容识别端到端 34 项（假服务，不出网）
+npm run test:extraction -w apps/server # 内容识别端到端 40 项（假服务，不出网）
+npm run test:redaction -w apps/server  # 涂抹的防泄漏验证 13 项（纯本地）
 npm run verify:live -w apps/server     # 真实调用验准确率（会计费）
 npm run bench:parse -w apps/server     # 量本地 PDF 解析耗时
 ```
 
 冒烟测试是**幂等**的，可以在同一个库上反复跑，不需要每次 `db:reset`。写新断言时保持这个性质：不要写死条数或编号，用交叉验证代替。
+
+`test:extraction` 会自己起一个测试服务（:3199）。**Windows 上 `child.kill()` 杀不掉 shell 包装的子进程**，所以脚本在启动前后都按端口清理一遍 —— 不清的话，下一次测试会连上跑着旧代码的僵尸，得出完全误导的结论（踩过一次：涂抹明明修好了，测试一直说没生效）。
 
 ## 文档
 

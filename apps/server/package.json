@@ -21,7 +21,8 @@
     "bench:parse": "tsx scripts/bench-parse.mjs",
     "demo:start": "tsx scripts/demo-tunnel.mjs start",
     "demo:end": "tsx scripts/demo-tunnel.mjs end",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:redaction": "tsx scripts/redaction-test.mjs"
   },
   "dependencies": {
     "@contract/shared": "*",
