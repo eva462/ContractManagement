@@ -227,13 +227,13 @@ async function main() {
    * 用户框住其中一个就以为涂干净了，另一个照样出网 —— 这是这个功能最容易
    * 出事的地方，所以专门检测出来提示。
    */
-  section('D · 金额检测（防止只涂了一半）')
+  section('D · 敏感信息检测（防止只涂了一半）')
 
-  const { detectAmounts } = await import('../src/extraction/redact.ts')
+  const { detectSensitive } = await import('../src/extraction/redact.ts')
   const dDoc = mupdf.Document.openDocument(textPdf, 'application/pdf')
   const dPage = dDoc.loadPage(0)
   const [dx0, dy0, dx1, dy1] = dPage.getBounds()
-  const found = detectAmounts(dPage, dx1 - dx0, dy1 - dy0)
+  const found = detectSensitive(dPage, dx1 - dx0, dy1 - dy0)
   const texts = found.map((f) => f.text)
 
   check('检测到阿拉伯数字金额', texts.some((t) => t.includes('128,600')), texts.join(' / '))
@@ -243,6 +243,25 @@ async function main() {
     found.length >= 2 && new Set(found.map((f) => f.x.toFixed(3))).size >= 2,
   )
   check('没把税率百分比误判成金额', !texts.some((t) => t === '13' || t === '13%'), texts.join(' / '))
+
+  const kindOf = (needle) => found.find((f) => f.text.includes(needle))?.kind
+  check('识别出银行账号（带空格分组也认）', kindOf('6217') === 'bankAccount', String(kindOf('6217')))
+  check('识别出身份证号', kindOf('440301199003072316') === 'idCard', String(kindOf('440301199003072316')))
+  check('识别出手机号', kindOf('13800138000') === 'phone', String(kindOf('13800138000')))
+  check(
+    '身份证号没被当成银行账号（更具体的模式优先）',
+    found.filter((f) => f.text.includes('440301199003072316')).length === 1,
+  )
+  check(
+    '没把统一社会信用代码当成证件号（它本来就印在合同上）',
+    !texts.some((t) => t.includes('91440300')),
+    texts.filter((t) => t.includes('91440300')).join(' / '),
+  )
+  check(
+    '座机号没被当成手机号',
+    !texts.some((t) => t.includes('8888')),
+    texts.filter((t) => t.includes('8888')).join(' / '),
+  )
 
   const allBoxes = found.map((f) => ({ page: 0, x: f.x, y: f.y, w: f.w, h: f.h }))
   const allText = (() => {
@@ -255,12 +274,15 @@ async function main() {
     return d.mode === 'text' ? d.text : ''
   })()
 
+  // 一次把四类都验掉：金额的两种写法、银行账号、身份证号、手机号
+  const LEAKS = ['128,600', '壹拾贰万', '6217 0012', '440301199003072316', '13800138000']
+  const stillThere = LEAKS.filter((n) => allText.includes(n))
   check(
-    '\x1b[1m一键涂掉检测到的全部金额后，两种写法都消失\x1b[0m',
-    !allText.includes('128,600') && !allText.includes('壹拾贰万'),
-    allText.includes('128,600') ? '数字仍在' : allText.includes('壹拾贰万') ? '大写仍在' : '',
+    '\x1b[1m一键涂掉后，金额/账号/证件号/手机号全部消失\x1b[0m',
+    stillThere.length === 0,
+    stillThere.length > 0 ? `❗仍然在：${stillThere.join('、')}` : '',
   )
-  check('但合同其余内容还在', allText.includes('增值税') && allText.length > 600, `剩余 ${allText.length} 字`)
+  check('但合同其余内容还在', allText.includes('增值税') && allText.length > 500, `剩余 ${allText.length} 字`)
 
   console.log(`\n${'─'.repeat(60)}`)
   if (failed === 0) console.log(`\x1b[32m\x1b[1m全部通过\x1b[0m  ${passed} 项`)

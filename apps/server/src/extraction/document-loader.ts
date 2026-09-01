@@ -1,7 +1,7 @@
 import * as mupdf from 'mupdf'
 import { ErrorCode, type PagePreview, type RedactionRect } from '@contract/shared'
 import { badRequest } from '../http/errors.js'
-import { detectAmounts, extractPageTextRedacted, paintRedactions, toPageRects } from './redact.js'
+import { detectSensitive, extractPageTextRedacted, paintRedactions, toPageRects } from './redact.js'
 
 /**
  * 本地文档解析。**这一层永远不出网**，换 AI 供应商时完全不受影响。
@@ -209,7 +209,7 @@ export function renderPagePreviews(input: LoadInput): PagePreview[] {
         imageBase64: Buffer.from(pix.asPNG()).toString('base64'),
         width: pix.getWidth(),
         height: pix.getHeight(),
-        amounts: [], // 直传的图片没有文本层，检测不了
+        sensitive: [], // 直传的图片没有文本层，检测不了
       },
     ]
   }
@@ -250,8 +250,8 @@ export function renderPagePreviews(input: LoadInput): PagePreview[] {
       imageBase64: Buffer.from(pix.asPNG()).toString('base64'),
       width: pix.getWidth(),
       height: pix.getHeight(),
-      // 扫描件没有文本层，detectAmounts 自然返回空数组
-      amounts: detectAmounts(page, bx1 - bx0, by1 - by0),
+      // 扫描件没有文本层，detectSensitive 自然返回空数组
+      sensitive: detectSensitive(page, bx1 - bx0, by1 - by0),
     })
   }
   return previews

@@ -1,5 +1,10 @@
 import { useCallback, useRef, useState, type PointerEvent, type ReactNode } from 'react'
-import type { DetectedAmount, PagePreview, RedactionRect } from '@contract/shared'
+import {
+  SENSITIVE_KIND_LABEL,
+  type DetectedSensitive,
+  type PagePreview,
+  type RedactionRect,
+} from '@contract/shared'
 import { Modal } from './overlays'
 import { Button, cx } from './ui'
 
@@ -93,12 +98,12 @@ export function RedactionDialog({
 
   const total = rects.length
 
-  // 页面上检测出来的疑似金额。中文合同的金额常写两遍（大写 + 小写、
-  // 同一行不同位置），只框住一个很容易漏掉另一个 —— 所以全标出来。
+  // 检测出来的敏感信息。金额常写两遍（大写 + 小写、同行不同位置），
+  // 银行账号和身份证号又混在收款信息里 —— 只框住一个很容易漏，所以全标出来。
   const hints = pages.flatMap((pg) =>
-    pg.amounts.map((a) => ({ ...a, page: pg.pageIndex })),
+    pg.sensitive.map((a) => ({ ...a, page: pg.pageIndex })),
   )
-  const covered = (a: DetectedAmount & { page: number }): boolean =>
+  const covered = (a: DetectedSensitive & { page: number }): boolean =>
     rects.some(
       (r) =>
         r.page === a.page &&
@@ -108,6 +113,16 @@ export function RedactionDialog({
         r.y + r.h >= a.y + a.h - 0.002,
     )
   const remaining = hints.filter((a) => !covered(a))
+
+  /** 「2 处金额、1 处银行账号、1 处身份证号」 */
+  const summary = Object.entries(
+    hints.reduce<Record<string, number>>((acc, h) => {
+      acc[h.kind] = (acc[h.kind] ?? 0) + 1
+      return acc
+    }, {}),
+  )
+    .map(([kind, n]) => `${n} 处${SENSITIVE_KIND_LABEL[kind as DetectedSensitive['kind']]}`)
+    .join('、')
 
   const redactAllAmounts = (): void => {
     setRects((prev) => [
@@ -136,7 +151,7 @@ export function RedactionDialog({
     >
       <div className="flex flex-col gap-3">
         <div className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-800 ring-1 ring-sky-200">
-          在页面上<strong>按住拖动</strong>框选不想发出去的内容（通常是金额）。
+          在页面上<strong>按住拖动</strong>框选不想发出去的内容（金额、账号、证件号）。
           框住的部分<strong>不会发给识别服务</strong>，识别结果里这些字段会留空，保存前手工填就行。
           <span className="mt-1 block text-xs text-sky-700/90">
             涂抹只影响送去识别的副本 —— 存进系统的合同原件是完整的。
@@ -155,14 +170,14 @@ export function RedactionDialog({
             <span>
               {remaining.length > 0 ? (
                 <>
-                  这份合同里检测到 <strong>{hints.length}</strong> 处金额，还有{' '}
-                  <strong>{remaining.length}</strong> 处没涂。
-                  <span className="ml-1 text-xs text-amber-800/90">
-                    合同里的金额常写两遍（大写一遍、数字一遍），别只涂了其中一个。
+                  检测到 <strong>{summary}</strong>，还有 <strong>{remaining.length}</strong> 处没涂。
+                  <span className="mt-0.5 block text-xs text-amber-800/90">
+                    金额常写两遍（大写一遍、数字一遍）；账号和证件号混在收款信息里。
+                    别只涂了其中一个。
                   </span>
                 </>
               ) : (
-                <>检测到的 {hints.length} 处金额都已经涂上了。</>
+                <>检测到的 {hints.length} 处敏感信息都已经涂上了。</>
               )}
             </span>
             {remaining.length > 0 && (
@@ -234,14 +249,14 @@ export function RedactionDialog({
                   ))}
 
                   {/* 检测到的金额：虚线提示，点一下单独涂掉 */}
-                  {page.amounts.map((a, ai) => {
+                  {page.sensitive.map((a, ai) => {
                     const withPage = { ...a, page: page.pageIndex }
                     if (covered(withPage)) return null
                     return (
                       <button
                         key={`hint-${ai}`}
                         type="button"
-                        title={`疑似金额「${a.text}」—— 点一下涂掉`}
+                        title={`${SENSITIVE_KIND_LABEL[a.kind]}「${a.text}」—— 点一下涂掉`}
                         onPointerDown={(e) => {
                           e.stopPropagation()
                           setRects((prev) => [
@@ -249,7 +264,13 @@ export function RedactionDialog({
                             { page: page.pageIndex, x: a.x, y: a.y, w: a.w, h: a.h },
                           ])
                         }}
-                        className="absolute border-2 border-dashed border-amber-500 bg-amber-300/25 hover:bg-amber-400/40"
+                        className={cx(
+                          'absolute border-2 border-dashed',
+                          // 账号和证件号比金额更敏感，用更扎眼的颜色
+                          a.kind === 'amount'
+                            ? 'border-amber-500 bg-amber-300/25 hover:bg-amber-400/40'
+                            : 'border-rose-500 bg-rose-300/25 hover:bg-rose-400/40',
+                        )}
                         style={{
                           left: `${a.x * 100}%`,
                           top: `${a.y * 100}%`,
@@ -279,7 +300,8 @@ export function RedactionDialog({
 
         <p className="text-xs text-slate-600">
           画错了点一下那个黑块就能删掉。
-          {hints.length > 0 && ' 黄色虚线是系统检测到的金额，点一下就能单独涂掉。'}
+          {hints.length > 0 &&
+            ' 虚线框是系统检测到的敏感信息（黄色=金额，红色=账号/证件号），点一下就能单独涂掉。'}
         </p>
       </div>
     </Modal>

@@ -88,11 +88,11 @@ for (const l of beforeLines) {
   if (NEEDLES.some((n) => l.includes(n))) console.log('  ' + mark(l, NEEDLES))
 }
 
-const { detectAmounts } = await import('../src/extraction/redact.ts')
+const { detectSensitive } = await import('../src/extraction/redact.ts')
 const probeDoc = mupdf.Document.openDocument(textPdf, 'application/pdf')
 const probePage = probeDoc.loadPage(0)
 const [pbx0, pby0, pbx1, pby1] = probePage.getBounds()
-const detected = detectAmounts(probePage, pbx1 - pbx0, pby1 - pby0)
+const detected = detectSensitive(probePage, pbx1 - pbx0, pby1 - pby0)
 console.log(
   C.dim(`  （系统检测到 ${detected.length} 处金额：${detected.map((d) => d.text).join('、')}）
 `),

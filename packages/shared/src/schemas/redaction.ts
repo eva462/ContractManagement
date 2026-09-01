@@ -59,11 +59,23 @@ export function describeRedactions(rects: RedactionRect[]): string {
   return `涂抹 ${rects.length} 处，覆盖第 ${pages.join('、')} 页`
 }
 
+/** 敏感信息的类别，界面上分组显示 */
+export const SENSITIVE_KINDS = ['amount', 'bankAccount', 'idCard', 'phone'] as const
+export type SensitiveKind = (typeof SENSITIVE_KINDS)[number]
+
+export const SENSITIVE_KIND_LABEL: Record<SensitiveKind, string> = {
+  amount: '金额',
+  bankAccount: '银行账号',
+  idCard: '身份证号',
+  phone: '手机号',
+}
+
 /**
- * 检测到的疑似金额位置。**纯提示，不自动涂** ——
- * 「税率 13%」这类也会被模式命中，该涂什么终究得人定。
+ * 检测到的疑似敏感信息。**纯提示，不自动涂** ——
+ * 模式会命中「税率 13%」这类，该涂什么终究得人定。
  */
-export interface DetectedAmount {
+export interface DetectedSensitive {
+  kind: SensitiveKind
   /** 原文，让用户知道要涂的是哪个 */
   text: string
   x: number
@@ -80,9 +92,11 @@ export interface PagePreview {
   width: number
   height: number
   /**
-   * 这一页里像金额的地方。中文合同的金额常写两遍（大写 + 小写、
-   * 同行不同位置），只框住一个很容易漏 —— 所以全标出来让人一眼看见。
+   * 这一页里检测到的敏感信息：金额、银行账号、身份证号、手机号。
+   *
+   * 中文合同的金额常写两遍（大写 + 小写、同行不同位置），银行账号和
+   * 身份证号又混在收款信息里 —— 只框住一个很容易漏，所以全标出来。
    * 扫描件没有文本层，这里会是空数组。
    */
-  amounts: DetectedAmount[]
+  sensitive: DetectedSensitive[]
 }
