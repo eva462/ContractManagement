@@ -46,6 +46,9 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 - **「待归档 → 履行中」有双条件闸门**：至少一个「合同正本」附件 + 填了原件存放位置。这是整套流程的价值所在，别为了图方便绕开。
 - **审批回避写死在权限里**：经办人不能审自己提交的合同，角色再高也不行（`forbidOwner`）。
 - **状态流转规则全在 `packages/shared/src/constants.ts` 的 `CONTRACT_ACTIONS` 一张表里**。加状态或改规则改这张表，别在服务层散写 if。
+- **合同类型不是枚举，是数据库字典**（`dict_items`，`dictCode=CONTRACT_TYPE`）。`CONTRACT_TYPE_SEED_*` 那几个常量**只用于灌种子和识别提示词**，不要拿来做校验或渲染下拉框——那样管理员新增的类型就认不到。前端用 `useDict()`，后端用 `assertValidDictItem()`。
+- **合同编号前缀跟着字典项走**（采购→CG）。管理员改了前缀，新编号立刻跟着变，已有编号不动。
+- **被引用过的字典项只能停用不能删**。删了的话历史合同的类型会变成指向不存在字典项的孤儿值。停用后新建选不到，老合同照常显示。
 - **审计日志与业务写入必须同一事务。** `writeAudit()` 只接受事务客户端 `Tx`，用类型焊死了。
 - **审计日志只增不改不删。** 应用层没有 UPDATE/DELETE 接口，数据库层还有触发器兜底。因此引用 `audit_logs` 的外键必须是 `Restrict` 而不是 Prisma 默认的 `SetNull`。
 - **只有草稿能删。** 其他状态一律只能完结。已完结对所有人只读，ADMIN 也要先解除完结。
@@ -58,7 +61,7 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 ## 测试
 
 ```bash
-npm run smoke -w apps/server           # 接口冒烟 89 项（需先 npm run dev）
+npm run smoke -w apps/server           # 接口冒烟 108 项（需先 npm run dev）
 npm run test:normalize -w apps/server  # 金额/日期归一化 25 项
 npm run test:extraction -w apps/server # 内容识别端到端 34 项（假服务，不出网）
 npm run verify:live -w apps/server     # 真实调用验准确率（会计费）
@@ -78,10 +81,10 @@ npm run bench:parse -w apps/server     # 量本地 PDF 解析耗时
 
 ## 下一步
 
-审批流程的**后端和状态机已完成**（单级审核，见 03 设计文档）。还差：
+审批流程和数据字典**已完成**。还差：
 
-1. **设置模块**：数据字典（合同类型等不再写死）、用户管理界面（先放占位入口）
-2. **供应商表** —— 字段清单还在等财务／合同负责人确认，尤其是银行账号要不要进系统
+1. **供应商表** —— 字段清单还在等财务／合同负责人确认，尤其是银行账号要不要进系统。设置页已有占位说明。
+2. **用户管理界面** —— 后端 5 个接口都通了，只缺界面。设置页已有占位入口。
 3. 支付流程（付款计划、发票、实付跟踪）—— 明确不在本期
 
 已知未做：导出 Excel、全局审计查询页。

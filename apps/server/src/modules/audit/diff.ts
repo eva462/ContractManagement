@@ -47,6 +47,8 @@ export interface DescribeContext {
   currency?: Currency
   /** id → 显示名。写入时就把名字定死，之后改名不影响历史记录。 */
   names?: Record<string, string>
+  /** 合同类型的 itemCode → 中文名。权威来源是数据库字典，要查好传进来。 */
+  typeLabels?: Record<string, string>
   /** 最多在摘要里点名几个字段，超出的折成「等 N 项」 */
   maxFields?: number
 }

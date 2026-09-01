@@ -97,7 +97,15 @@ export const EXPIRING_SOON_DAYS = 30
 
 /* ── 合同类型 ───────────────────────────────────────────────────────── */
 
-export const CONTRACT_TYPE_VALUES = [
+/**
+ * ⚠️ 合同类型**不再是封闭枚举**。权威来源是数据库 dict_items（dictCode=CONTRACT_TYPE），
+ * 管理员可在设置里增删改。这里的常量只用于两件事：
+ *   1. 建库时灌初始字典（prisma/seed.ts）
+ *   2. 内容识别的提示词里给模型一个可选值参考
+ * **不要拿它做校验**，也不要拿它渲染下拉框 —— 那样管理员新增的类型就不认了。
+ * 前端请用 useDict('CONTRACT_TYPE')，后端请查库。
+ */
+export const CONTRACT_TYPE_SEED_VALUES = [
   'PURCHASE',
   'SALES',
   'SERVICE',
@@ -107,9 +115,10 @@ export const CONTRACT_TYPE_VALUES = [
   'FRAMEWORK',
   'OTHER',
 ] as const
-export type ContractType = (typeof CONTRACT_TYPE_VALUES)[number]
+/** 字典项的 itemCode。不是联合类型 —— 取值由数据库决定，不是代码决定。 */
+export type ContractType = string
 
-export const CONTRACT_TYPE_LABEL: Record<ContractType, string> = {
+export const CONTRACT_TYPE_SEED_LABEL: Record<string, string> = {
   PURCHASE: '采购',
   SALES: '销售',
   SERVICE: '服务',
@@ -124,7 +133,7 @@ export const CONTRACT_TYPE_LABEL: Record<ContractType, string> = {
  * 合同编号前缀。编号格式 `{前缀}-{年份}-{4位流水}`，例如 CG-2026-0001。
  * 想改成全局统一流水（HT-2026-0001），把这张表全部改成同一个前缀即可。
  */
-export const CONTRACT_TYPE_PREFIX: Record<ContractType, string> = {
+export const CONTRACT_TYPE_SEED_PREFIX: Record<string, string> = {
   PURCHASE: 'CG',
   SALES: 'XS',
   SERVICE: 'FW',
@@ -177,7 +186,7 @@ export const ATTACHMENT_TYPE_LABEL: Record<AttachmentType, string> = {
 
 /* ── 审计 ──────────────────────────────────────────────────────────── */
 
-export const AUDIT_ENTITY_VALUES = ['CONTRACT', 'ATTACHMENT', 'USER'] as const
+export const AUDIT_ENTITY_VALUES = ['CONTRACT', 'ATTACHMENT', 'USER', 'DICT'] as const
 export type AuditEntityType = (typeof AUDIT_ENTITY_VALUES)[number]
 
 export const AUDIT_ACTION_VALUES = [

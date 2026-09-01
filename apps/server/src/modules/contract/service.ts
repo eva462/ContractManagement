@@ -2,7 +2,6 @@ import {
   CONTRACT_ACTIONS,
   CONTRACT_EDITABLE_FIELDS,
   CONTRACT_STATUS_LABEL,
-  CONTRACT_TYPE_PREFIX,
   ErrorCode,
   EXPIRING_SOON_DAYS,
   dateStringToDate,
@@ -33,6 +32,7 @@ import {
   type ContractRow,
 } from './mapper.js'
 import { canDelete, canEdit, canRunAction } from './permissions.js'
+import { assertValidDictItem, contractTypePrefix, dictLabelMap } from '../dict/service.js'
 import type { Actor, ActingUser, RequestMeta } from '../../types.js'
 
 /* ── 值的形状转换 ───────────────────────────────────────────────────── */
@@ -171,7 +171,8 @@ export async function getContractDetail(id: string, actor: Actor): Promise<Contr
  * 查询刻意不过滤软删除的合同 —— 删掉的编号不应该被重新用掉。
  */
 export async function nextContractNo(contractType: ContractType): Promise<string> {
-  const prefix = CONTRACT_TYPE_PREFIX[contractType]
+  // 前缀来自数据库字典，不再是代码里的常量 —— 管理员改了前缀，新编号立刻跟着走
+  const prefix = await contractTypePrefix(contractType)
   const year = new Date().getFullYear()
   const head = `${prefix}-${year}-`
 
@@ -233,6 +234,8 @@ export async function createContract(
 
   await assertOwnerExists(values.ownerId)
   await assertContractNoAvailable(values.contractNo, null)
+  // 合同类型的合法性由数据库字典决定，不是代码里的枚举
+  await assertValidDictItem('CONTRACT_TYPE', values.contractType, 'contractType')
 
   const status: ContractStatus = activate ? 'ACTIVE' : 'DRAFT'
 
@@ -298,6 +301,9 @@ export async function updateContract(
   if (issues.length > 0) throw validationFailed(issues)
 
   if ('ownerId' in input) await assertOwnerExists(merged.ownerId)
+  if ('contractType' in input) {
+    await assertValidDictItem('CONTRACT_TYPE', merged.contractType, 'contractType')
+  }
   if ('contractNo' in input && merged.contractNo !== before.contractNo) {
     await assertContractNoAvailable(merged.contractNo, id)
   }
@@ -338,6 +344,7 @@ export async function updateContract(
       summary: `${actor.displayName} ${describeFieldChanges(changes, {
         currency: (merged.currency as Currency) ?? 'CNY',
         names,
+        typeLabels: await dictLabelMap('CONTRACT_TYPE'),
       })}`,
       changes,
       ip: meta.ip,

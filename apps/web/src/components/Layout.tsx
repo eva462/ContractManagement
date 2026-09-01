@@ -1,10 +1,14 @@
 import { useState, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { ROLE_LABEL } from '@contract/shared'
+import { ROLE_LABEL, roleAtLeast, type Role } from '@contract/shared'
 import { useAuth } from '../auth/AuthContext'
 import { Button, cx } from './ui'
 
-const NAV = [{ to: '/contracts', label: '合同台账' }]
+const NAV: { to: string; label: string; minRole?: Role }[] = [
+  { to: '/contracts', label: '合同台账' },
+  // 维护字典是 MANAGER 起步；用户管理才是 ADMIN 专属（在设置页里再判一次）
+  { to: '/settings', label: '设置', minRole: 'MANAGER' },
+]
 
 export function Layout({ children }: { children: ReactNode }): ReactNode {
   const { user, logout } = useAuth()
@@ -26,7 +30,7 @@ export function Layout({ children }: { children: ReactNode }): ReactNode {
           </Link>
 
           <nav className="flex items-center gap-1">
-            {NAV.map((item) => (
+            {NAV.filter((item) => !item.minRole || (user && roleAtLeast(user.role, item.minRole))).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

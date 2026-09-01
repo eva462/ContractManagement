@@ -293,11 +293,23 @@ export function EmptyState({
   )
 }
 
-export function ErrorNotice({ message }: { message: string }): ReactNode {
+export function ErrorNotice({
+  message,
+  tone = 'error',
+}: {
+  message: string
+  /** info 用于「还在确认中」这类提示 —— 不是错误，别用红色吓人 */
+  tone?: 'error' | 'info' | 'warning'
+}): ReactNode {
+  const STYLES = {
+    error: 'bg-rose-50 text-rose-700 ring-rose-200',
+    warning: 'bg-amber-50 text-amber-800 ring-amber-200',
+    info: 'bg-sky-50 text-sky-800 ring-sky-200',
+  }
   return (
     <div
-      role="alert"
-      className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200"
+      role={tone === 'error' ? 'alert' : 'status'}
+      className={cx('rounded-md px-3 py-2 text-sm ring-1', STYLES[tone])}
     >
       {message}
     </div>

@@ -7,6 +7,7 @@ import { LoadingBlock } from './components/ui'
 import { ContractDetailPage } from './pages/ContractDetailPage'
 import { ContractFormPage } from './pages/ContractFormPage'
 import { ContractListPage } from './pages/ContractListPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { LoginPage } from './pages/LoginPage'
 
 function RequireAuth({ children }: { children: ReactNode }): ReactNode {
@@ -53,6 +54,14 @@ function AppRoutes(): ReactNode {
         element={
           <RequireAuth>
             <ContractFormPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <SettingsPage />
           </RequireAuth>
         }
       />

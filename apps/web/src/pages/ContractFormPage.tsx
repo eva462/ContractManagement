@@ -4,8 +4,6 @@ import {
   AMOUNT_TYPE_LABEL,
   AMOUNT_TYPE_VALUES,
   CONTRACT_FIELD_LABEL,
-  CONTRACT_TYPE_LABEL,
-  CONTRACT_TYPE_VALUES,
   CURRENCY_LABEL,
   CURRENCY_VALUES,
   validateContractRules,
@@ -17,6 +15,7 @@ import {
   type UserBrief,
 } from '@contract/shared'
 import { ApiError } from '../api/client'
+import { optionsWithCurrent, useDict } from '../api/dict'
 import { attachmentApi, contractApi, userApi } from '../api/resources'
 import { useAuth } from '../auth/AuthContext'
 import { ExtractionPanel, ExtractionSummary } from '../components/ExtractionPanel'
@@ -135,6 +134,10 @@ export function ContractFormPage(): ReactNode {
   // 比在后端搞一套 pending upload 简单得多，而且天然复用已有的附件留痕。
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
+
+  // 新建时只给启用的项选；编辑一份类型已被停用的老合同时，
+  // optionsWithCurrent 会把当前值补回下拉，免得一保存就把类型弄丢了
+  const { items: typeItems } = useDict('CONTRACT_TYPE')
 
   useEffect(() => {
     document.title = `${isEdit ? '编辑合同' : '新建合同'} · 合同管理系统`
@@ -388,9 +391,9 @@ export function ContractFormPage(): ReactNode {
                 onChange={(e) => set('contractType', e.target.value)}
               >
                 <option value="">请选择</option>
-                {CONTRACT_TYPE_VALUES.map((t) => (
-                  <option key={t} value={t}>
-                    {CONTRACT_TYPE_LABEL[t]}
+                {optionsWithCurrent(typeItems, values.contractType).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </Select>

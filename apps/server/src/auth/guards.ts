@@ -1,4 +1,5 @@
 import type { FastifyRequest } from 'fastify'
+import { actorOf, type ActingUser } from '../types.js'
 import { roleAtLeast, type AuthenticatedUser, type Role } from '@contract/shared'
 import { auth } from '../context.js'
 import { db } from '../db.js'
@@ -36,6 +37,14 @@ export async function requireAuth(req: FastifyRequest): Promise<void> {
 export function currentUser(req: FastifyRequest): AuthenticatedUser {
   if (!req.currentUser) throw unauthorized()
   return req.currentUser
+}
+
+/**
+ * 当前用户 → 服务层要的 ActingUser。
+ * 路由层统一用这个，别再各写一份转换。
+ */
+export function actingUser(req: FastifyRequest): ActingUser {
+  return actorOf(currentUser(req))
 }
 
 /** 角色门槛。注意这是接口级的粗粒度守卫，行级权限在 service 里另判。 */

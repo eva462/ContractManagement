@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AMOUNT_TYPE_LABEL,
   CONTRACT_STATUS_LABEL,
-  CONTRACT_TYPE_LABEL,
   CURRENCY_LABEL,
   formatAmount,
   todayString,
@@ -11,6 +10,7 @@ import {
   type ContractDetail,
 } from '@contract/shared'
 import { ApiError } from '../api/client'
+import { useDict } from '../api/dict'
 import { contractApi } from '../api/resources'
 import { AttachmentPanel } from '../components/AttachmentPanel'
 import { AuditTimeline } from '../components/AuditTimeline'
@@ -57,6 +57,8 @@ export function ContractDetailPage(): ReactNode {
   const [actionForm, setActionForm] = useState({ comment: '', signedDate: '', reason: '', date: '' })
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
+  // 展示历史值，所以连停用的字典项也要拿 —— 否则老合同的类型会显示成裸编码
+  const { labelOf: typeLabel } = useDict('CONTRACT_TYPE', { includeInactive: true })
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const load = useCallback(
@@ -266,7 +268,7 @@ export function ContractDetailPage(): ReactNode {
                 <span className="font-mono tabular">{dash(contract.contractNo)}</span>
               </Row>
               <Row label="合同类型">
-                {contract.contractType ? CONTRACT_TYPE_LABEL[contract.contractType] : null}
+                {contract.contractType ? typeLabel(contract.contractType) : null}
               </Row>
               <Row label="对方单位">{dash(contract.counterpartyName)}</Row>
               <Row label="对方联系人">{dash(contract.counterpartyContact)}</Row>

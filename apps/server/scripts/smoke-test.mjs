@@ -480,6 +480,97 @@ async function main() {
     (await call('DELETE', `/audit-logs/${entries[0]?.id}`, { token: admin })).status === 404,
   )
 
+  /* ── G 数据字典 ───────────────────────────────────────────────── */
+  section('G · 数据字典')
+
+  const dictRead = await call('GET', '/dicts/CONTRACT_TYPE/items', { token: staff })
+  check('所有登录用户都能读字典（新建页下拉要用）', dictRead.status === 200 && (dictRead.body?.data ?? []).length >= 8)
+  check('默认只返回启用的项', (dictRead.body?.data ?? []).every((i) => i.isActive))
+  check('合同类型带编号前缀', (dictRead.body?.data ?? []).some((i) => i.itemCode === 'PURCHASE' && i.prefix === 'CG'))
+
+  const badCode = await call('GET', '/dicts/NOT_A_DICT/items', { token: staff })
+  check('不认识的字典分组被拒', badCode.status === 400)
+
+  const staffCreate = await call('POST', '/dicts/CONTRACT_TYPE/items', {
+    token: staff,
+    body: { itemCode: 'HACK', itemLabel: '越权新增' },
+  })
+  check('STAFF 无权维护字典', staffCreate.status === 403, `实际 ${staffCreate.status}`)
+
+  // 用带随机后缀的编码，脚本才能在同一个库上重复跑
+  const suffix = String(Date.now()).slice(-6)
+  const newCode = `SMOKE_${suffix}`
+  const created = await call('POST', '/dicts/CONTRACT_TYPE/items', {
+    token: manager,
+    body: { itemCode: newCode, itemLabel: '[冒烟] 技术开发', prefix: 'JS', sortOrder: 999 },
+  })
+  check('MANAGER 可以新增字典项', created.status === 201, `实际 ${created.status}`)
+  const newItemId = created.body?.data?.id
+
+  const dupCode = await call('POST', '/dicts/CONTRACT_TYPE/items', {
+    token: manager,
+    body: { itemCode: newCode, itemLabel: '重复编码' },
+  })
+  check('编码重复被拒', dupCode.status === 409, `实际 ${dupCode.status}`)
+
+  const lowerCode = await call('POST', '/dicts/CONTRACT_TYPE/items', {
+    token: manager,
+    body: { itemCode: 'lower_case', itemLabel: '小写编码' },
+  })
+  check('编码必须大写字母开头', lowerCode.status === 400 && issueFields(lowerCode).includes('itemCode'))
+
+  // 这两条才是字典真正起作用的证据：新增的类型立刻能用，且编号跟着新前缀走
+  const newNo = await call('GET', `/contracts/next-no?contractType=${newCode}`, { token: staff })
+  check('新增类型的编号用它自己的前缀生成', /^JS-\d{4}-\d{4}$/.test(newNo.body?.data?.contractNo ?? ''), newNo.body?.data?.contractNo)
+
+  const useNew = await call('POST', '/contracts', {
+    token: staff,
+    body: { title: '[冒烟] 用新类型建的合同', contractType: newCode },
+  })
+  check('新增的类型可以直接用来建合同', useNew.status === 201, `实际 ${useNew.status}`)
+  const usingId = useNew.body?.data?.id
+
+  const bogusType = await call('POST', '/contracts', {
+    token: staff,
+    body: { title: '[冒烟] 不存在的类型', contractType: 'NO_SUCH_TYPE' },
+  })
+  check('用不存在的类型建合同被拒', bogusType.status === 400 && issueFields(bogusType).includes('contractType'))
+
+  // 被引用了就不能删，只能停用 —— 否则历史合同的类型会变成孤儿值
+  const delUsed = await call('DELETE', `/dict-items/${newItemId}`, { token: manager })
+  check('已被合同引用的字典项不能删除', delUsed.status === 409, `实际 ${delUsed.status}`)
+  check(
+    '并且提示改用「停用」',
+    (delUsed.body?.error?.issues?.[0]?.message ?? '').includes('停用'),
+    delUsed.body?.error?.issues?.[0]?.message,
+  )
+
+  const disable = await call('PATCH', `/dict-items/${newItemId}`, { token: manager, body: { isActive: false } })
+  check('可以停用', disable.body?.data?.isActive === false)
+
+  const afterDisable = await call('GET', '/dicts/CONTRACT_TYPE/items', { token: staff })
+  check('停用后不出现在默认列表里', !(afterDisable.body?.data ?? []).some((i) => i.itemCode === newCode))
+
+  const withInactive = await call('GET', '/dicts/CONTRACT_TYPE/items?includeInactive=true', { token: manager })
+  check('设置页能看到停用的项', (withInactive.body?.data ?? []).some((i) => i.itemCode === newCode))
+
+  const useDisabled = await call('POST', '/contracts', {
+    token: staff,
+    body: { title: '[冒烟] 用已停用类型', contractType: newCode },
+  })
+  check('已停用的类型不能用于新建', useDisabled.status === 400 && issueFields(useDisabled).includes('contractType'))
+
+  const oldStillOk = await call('GET', `/contracts/${usingId}`, { token: staff })
+  check('但引用了它的老合同照常能看', oldStillOk.status === 200 && oldStillOk.body?.data?.contractType === newCode)
+
+  // 没被引用的可以真删
+  const tempItem = await call('POST', '/dicts/DEPARTMENT/items', {
+    token: manager,
+    body: { itemCode: `TEMP_${suffix}`, itemLabel: '[冒烟] 待删部门' },
+  })
+  const delUnused = await call('DELETE', `/dict-items/${tempItem.body?.data?.id}`, { token: manager })
+  check('没被引用的字典项可以删除', delUnused.status === 200, `实际 ${delUnused.status}`)
+
   /* ── 汇总 ─────────────────────────────────────────────────────── */
   console.log(`\n${'─'.repeat(60)}`)
   if (failed === 0) {

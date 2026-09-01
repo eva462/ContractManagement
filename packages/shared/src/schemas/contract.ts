@@ -2,7 +2,6 @@ import { z } from 'zod'
 import {
   AMOUNT_TYPE_VALUES,
   CONTRACT_STATUS_VALUES,
-  CONTRACT_TYPE_VALUES,
   CURRENCY_VALUES,
   type AmountType,
   type ContractStatus,
@@ -36,7 +35,8 @@ import {
 export const ContractWriteSchema = z.object({
   contractNo: nullableText(64, '合同编号'),
   title: requiredText(255, '合同名称'),
-  contractType: nullableEnum(CONTRACT_TYPE_VALUES),
+  // 取值由数据库字典决定，这里只管格式；「是不是有效字典项」由服务端查库校验
+  contractType: nullableText(32, '合同类型'),
   counterpartyName: nullableText(255, '对方单位'),
   counterpartyContact: nullableText(64, '对方联系人'),
   amountType: nullableEnum(AMOUNT_TYPE_VALUES),
@@ -129,7 +129,7 @@ export const ContractQuerySchema = z.object({
   status: z.enum(CONTRACT_STATUS_VALUES).optional(),
   /** 到期派生态筛选。EXPIRED / EXPIRING 都只在履行中的合同里找 */
   expiry: z.enum(['EXPIRED', 'EXPIRING']).optional(),
-  contractType: z.enum(CONTRACT_TYPE_VALUES).optional(),
+  contractType: z.string().trim().max(32).optional(),
   ownerId: z.string().max(64).optional(),
   signDateFrom: z
     .string()
@@ -178,7 +178,7 @@ export const ContractStatusChangeSchema = z
 export type ContractStatusChangeInput = z.input<typeof ContractStatusChangeSchema>
 
 export const NextContractNoQuerySchema = z.object({
-  contractType: z.enum(CONTRACT_TYPE_VALUES),
+  contractType: z.string().trim().min(1).max(32),
 })
 
 /* ── 响应 DTO ───────────────────────────────────────────────────────── */

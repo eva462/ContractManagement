@@ -1,4 +1,9 @@
 import { PrismaClient } from '@prisma/client'
+import {
+  CONTRACT_TYPE_SEED_LABEL,
+  CONTRACT_TYPE_SEED_PREFIX,
+  CONTRACT_TYPE_SEED_VALUES,
+} from '@contract/shared'
 import { hashPassword } from '../src/auth/password.js'
 
 const db = new PrismaClient()
@@ -44,6 +49,40 @@ async function main(): Promise<void> {
 
   // 示例合同刻意覆盖全部 4 个存储状态 + 4 种到期派生态，
   // 这样一进台账就能看到红黄标、只读归档、终止等各种情况长什么样。
+
+  /* ── 数据字典 ────────────────────────────────────────────────────
+   * 合同类型等原本写死在代码里，现在挪进数据库让管理员自己维护。
+   * 这里只灌一份初始值；之后的增删改都在设置页做，不要回来改这段。
+   */
+  const dictSeed: {
+    dictCode: string
+    itemCode: string
+    itemLabel: string
+    prefix?: string
+    sortOrder: number
+  }[] = [
+    ...CONTRACT_TYPE_SEED_VALUES.map((code, i) => ({
+      dictCode: 'CONTRACT_TYPE',
+      itemCode: code,
+      itemLabel: CONTRACT_TYPE_SEED_LABEL[code]!,
+      prefix: CONTRACT_TYPE_SEED_PREFIX[code]!,
+      sortOrder: i * 10,
+    })),
+    { dictCode: 'OUR_ENTITY', itemCode: 'MAIN', itemLabel: '（请在设置里改成贵公司主体全称）', sortOrder: 0 },
+    { dictCode: 'DEPARTMENT', itemCode: 'ADMIN_DEPT', itemLabel: '行政部', sortOrder: 0 },
+    { dictCode: 'DEPARTMENT', itemCode: 'FINANCE', itemLabel: '财务部', sortOrder: 10 },
+    { dictCode: 'DEPARTMENT', itemCode: 'BUSINESS', itemLabel: '业务部', sortOrder: 20 },
+  ]
+
+  for (const d of dictSeed) {
+    await db.dictItem.upsert({
+      where: { dictCode_itemCode: { dictCode: d.dictCode, itemCode: d.itemCode } },
+      update: {},
+      create: d as never,
+    })
+  }
+  console.log(`字典项 ${dictSeed.length} 条`)
+
   const samples = [
     {
       contractNo: 'CG-2026-0001',

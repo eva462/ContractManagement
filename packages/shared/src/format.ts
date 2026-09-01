@@ -2,7 +2,7 @@ import {
   AMOUNT_TYPE_LABEL,
   ATTACHMENT_TYPE_LABEL,
   CONTRACT_STATUS_LABEL,
-  CONTRACT_TYPE_LABEL,
+  CONTRACT_TYPE_SEED_LABEL,
   CURRENCY_LABEL,
   CURRENCY_SYMBOL,
   EXPIRING_SOON_DAYS,
@@ -104,6 +104,11 @@ export interface FieldFormatContext {
   currency?: Currency
   /** 把 ownerId 之类的 id 翻成显示名。审计摘要在写入时就把名字定死，之后改名不影响历史。 */
   names?: Record<string, string>
+  /**
+   * 合同类型的 itemCode → 中文名。权威来源是数据库字典，所以要由调用方查好传进来。
+   * 不传则退回种子标签 —— 管理员新增的类型会显示成编码，但不至于崩。
+   */
+  typeLabels?: Record<string, string>
 }
 
 /**
@@ -125,7 +130,7 @@ export function formatContractFieldValue(
     case 'amountType':
       return AMOUNT_TYPE_LABEL[value as AmountType] ?? String(value)
     case 'contractType':
-      return CONTRACT_TYPE_LABEL[value as ContractType] ?? String(value)
+      return ctx.typeLabels?.[String(value)] ?? CONTRACT_TYPE_SEED_LABEL[String(value)] ?? String(value)
     case 'status':
       return CONTRACT_STATUS_LABEL[value as ContractStatus] ?? String(value)
     case 'attachmentType':

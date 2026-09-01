@@ -1,10 +1,8 @@
 import { z } from 'zod'
 import {
   AMOUNT_TYPE_VALUES,
-  CONTRACT_TYPE_VALUES,
   CURRENCY_VALUES,
   type AmountType,
-  type ContractType,
   type Currency,
 } from '../enums.js'
 
@@ -106,7 +104,8 @@ const looseAmount = z.string().regex(/^\d{1,16}(\.\d{1,2})?$/, '金额格式不�
 export const EXTRACTED_FIELD_SCHEMAS = {
   contractNo: rawField(z.string().trim().max(64)),
   title: rawField(z.string().trim().max(255)),
-  contractType: rawField(z.enum(CONTRACT_TYPE_VALUES)),
+  // 取值由数据库字典决定，这里只管格式；无效值会在预填表单时由下拉框兜住
+  contractType: rawField(z.string().trim().max(32)),
   counterpartyName: rawField(z.string().trim().max(255)),
   counterpartyContact: rawField(z.string().trim().max(64)),
   amountType: rawField(z.enum(AMOUNT_TYPE_VALUES)),
@@ -123,7 +122,7 @@ export const EXTRACTED_FIELD_SCHEMAS = {
 export interface ExtractedContractValues {
   contractNo?: string
   title?: string
-  contractType?: ContractType
+  contractType?: string
   counterpartyName?: string
   counterpartyContact?: string
   amountType?: AmountType

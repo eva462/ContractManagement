@@ -37,17 +37,6 @@ enum ApprovalDecision {
   REJECTED
 }
 
-enum ContractType {
-  PURCHASE
-  SALES
-  SERVICE
-  LEASE
-  LABOR
-  NDA
-  FRAMEWORK
-  OTHER
-}
-
 enum AmountType {
   TAX_INCLUDED
   TAX_EXCLUDED
@@ -72,6 +61,7 @@ enum AuditEntityType {
   CONTRACT
   ATTACHMENT
   USER
+  DICT
 }
 
 enum AuditAction {
@@ -134,7 +124,9 @@ model Contract {
   contractNo String? @unique
 
   title               String
-  contractType        ContractType?
+  /// 引用 dict_items 里 dictCode=CONTRACT_TYPE 的 itemCode。
+  /// 刻意不是数据库枚举 —— 加一个合同类型不该需要改代码重新部署。
+  contractType        String?
   counterpartyName    String?
   counterpartyContact String?
 
@@ -264,4 +256,32 @@ model ContractApproval {
   @@index([contractId, seq])
   @@index([decision])
   @@map("contract_approvals")
+}
+
+/// 数据字典。把「合同类型」这类原本写死在代码里的枚举挪出来，
+/// 让管理员在设置里自己维护，不用改代码重新部署。
+///
+/// 被引用过的字典项**不允许删除，只能停用**（isActive=false）——
+/// 否则历史合同的类型会变成空。停用后新建时选不到，老合同照常显示。
+model DictItem {
+  id        String @id @default(cuid())
+  /// 字典分组：CONTRACT_TYPE / OUR_ENTITY / DEPARTMENT
+  dictCode  String
+  /// 存进业务表的值，建库后不应再改
+  itemCode  String
+  /// 界面上显示的中文名，随时可改
+  itemLabel String
+
+  /// 合同类型专用：合同编号前缀（采购 → CG）。其他分组留空。
+  /// 编号格式 {prefix}-{年份}-{4位流水}，所以改这个会影响新建合同的编号。
+  prefix String?
+
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dictCode, itemCode])
+  @@index([dictCode, isActive, sortOrder])
+  @@map("dict_items")
 }

@@ -1,8 +1,8 @@
 import {
   AMOUNT_TYPE_LABEL,
   AMOUNT_TYPE_VALUES,
-  CONTRACT_TYPE_LABEL,
-  CONTRACT_TYPE_VALUES,
+  CONTRACT_TYPE_SEED_LABEL,
+  CONTRACT_TYPE_SEED_VALUES,
   CURRENCY_VALUES,
 } from '@contract/shared'
 import type { LoadedDocument } from './document-loader.js'
@@ -18,7 +18,7 @@ export interface ChatContentPart {
   image_url?: { url: string }
 }
 
-const typeOptions = CONTRACT_TYPE_VALUES.map((v) => `${v}(${CONTRACT_TYPE_LABEL[v]})`).join('、')
+const typeOptions = CONTRACT_TYPE_SEED_VALUES.map((v) => `${v}(${CONTRACT_TYPE_SEED_LABEL[v]})`).join('、')
 const amountOptions = AMOUNT_TYPE_VALUES.map((v) => `${v}(${AMOUNT_TYPE_LABEL[v]})`).join('、')
 
 export const SYSTEM_PROMPT = `你是合同信息抽取助手。用户会给你一份中文合同（文本或扫描图片），

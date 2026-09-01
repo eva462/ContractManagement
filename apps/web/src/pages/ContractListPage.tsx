@@ -3,14 +3,13 @@ import { Link, useSearchParams } from 'react-router-dom'
 import {
   CONTRACT_STATUS_LABEL,
   CONTRACT_STATUS_VALUES,
-  CONTRACT_TYPE_LABEL,
-  CONTRACT_TYPE_VALUES,
   DEFAULT_PAGE_SIZE,
   formatAmount,
   type ContractListItem,
   type UserBrief,
 } from '@contract/shared'
 import { ApiError } from '../api/client'
+import { useDict } from '../api/dict'
 import { contractApi, userApi } from '../api/resources'
 import {
   Button,
@@ -56,6 +55,7 @@ export function ContractListPage(): ReactNode {
   const [total, setTotal] = useState(0)
   const [users, setUsers] = useState<UserBrief[]>([])
   const [loading, setLoading] = useState(true)
+  const { items: typeItems, labelOf: typeLabel } = useDict('CONTRACT_TYPE', { includeInactive: true })
   const [error, setError] = useState<string | null>(null)
 
   // 输入框走本地状态，停止输入 300ms 后才同步到 URL，避免每敲一个字发一次请求
@@ -205,9 +205,10 @@ export function ContractListPage(): ReactNode {
             aria-label="按类型筛选"
           >
             <option value="">全部类型</option>
-            {CONTRACT_TYPE_VALUES.map((t) => (
-              <option key={t} value={t}>
-                {CONTRACT_TYPE_LABEL[t]}
+            {typeItems.map((t) => (
+              <option key={t.itemCode} value={t.itemCode}>
+                {t.itemLabel}
+                {t.isActive ? '' : '（已停用）'}
               </option>
             ))}
           </Select>
@@ -326,7 +327,7 @@ export function ContractListPage(): ReactNode {
                       )}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap text-slate-700">
-                      {c.contractType ? CONTRACT_TYPE_LABEL[c.contractType] : '—'}
+                      {c.contractType ? typeLabel(c.contractType) : '—'}
                     </td>
                     <td className="max-w-[220px] truncate px-3 py-2.5 text-slate-700">
                       {c.counterpartyName ?? '—'}
