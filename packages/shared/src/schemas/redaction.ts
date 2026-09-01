@@ -58,3 +58,12 @@ export function describeRedactions(rects: RedactionRect[]): string {
   const pages = [...new Set(rects.map((r) => r.page + 1))].sort((a, b) => a - b)
   return `涂抹 ${rects.length} 处，覆盖第 ${pages.join('、')} 页`
 }
+
+/** 一页预览图。服务端本地渲染，前端拿它当画布拉涂抹框。 */
+export interface PagePreview {
+  pageIndex: number
+  /** base64 PNG（data URI 的 payload 部分） */
+  imageBase64: string
+  width: number
+  height: number
+}

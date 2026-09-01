@@ -5,6 +5,8 @@ import type {
   AuthenticatedUser,
   ExtractionResult,
   ExtractionStatus,
+  PagePreview,
+  RedactionRect,
   ContractDetail,
   ContractListItem,
   ContractType,
@@ -100,9 +102,22 @@ export const extractionApi = {
       { signal },
     ),
 
-  extract: (file: File, signal?: AbortSignal) => {
+  /** 渲染每页预览图，给涂抹界面当画布。纯本地渲染，不出网。 */
+  preview: (file: File, signal?: AbortSignal) => {
     const fd = new FormData()
     fd.append('file', file, file.name)
+    return request<PagePreview[]>('/extraction/preview', {
+      method: 'POST',
+      formData: fd,
+      signal,
+    })
+  },
+
+  extract: (file: File, redactions: RedactionRect[], signal?: AbortSignal) => {
+    const fd = new FormData()
+    fd.append('file', file, file.name)
+    // 涂抹区跟文件一起发。服务端用 req.parts() 遍历，跟顺序无关。
+    if (redactions.length > 0) fd.append('redactions', JSON.stringify(redactions))
     return request<ExtractionResult>('/extraction/contract', {
       method: 'POST',
       formData: fd,

@@ -10,6 +10,7 @@ import {
   EXTRACTABLE_FIELDS,
   type ContractDetail,
   type ExtractionResult,
+  type RedactionRect,
   type ContractType,
   type Currency,
   type UserBrief,
@@ -134,6 +135,8 @@ export function ContractFormPage(): ReactNode {
   // 比在后端搞一套 pending upload 简单得多，而且天然复用已有的附件留痕。
   const [extraction, setExtraction] = useState<ExtractionResult | null>(null)
   const [sourceFile, setSourceFile] = useState<File | null>(null)
+  // 这次识别涂抹了哪些区域。只用于在结果条上提示「哪些字段要手工填」。
+  const [redactions, setRedactions] = useState<RedactionRect[]>([])
 
   // 新建时只给启用的项选；编辑一份类型已被停用的老合同时，
   // optionsWithCurrent 会把当前值补回下拉，免得一保存就把类型弄丢了
@@ -179,9 +182,14 @@ export function ContractFormPage(): ReactNode {
   }, [id])
 
   /** 把识别结果填进表单。只覆盖识别到的字段，用户已经手填的内容不动。 */
-  const applyExtraction = (result: ExtractionResult, file: File): void => {
+  const applyExtraction = (
+    result: ExtractionResult,
+    file: File,
+    rects: RedactionRect[],
+  ): void => {
     setExtraction(result)
     setSourceFile(file)
+    setRedactions(rects)
     setErrors({})
     setValues((prev) => {
       const next = { ...prev }
@@ -200,7 +208,9 @@ export function ContractFormPage(): ReactNode {
     })
     setTopError(
       result.meta.fieldCount === 0
-        ? '没有识别出可用字段，请手工录入'
+        ? rects.length > 0
+          ? '没有识别出可用字段 —— 可能涂抹范围太大，或这份文件读不出内容。请手工录入。'
+          : '没有识别出可用字段，请手工录入'
         : null,
     )
   }
@@ -363,9 +373,11 @@ export function ContractFormPage(): ReactNode {
             <ExtractionSummary
               result={extraction}
               file={sourceFile}
+              redactions={redactions}
               onClear={() => {
                 setExtraction(null)
                 setSourceFile(null)
+                setRedactions([])
               }}
             />
           ) : (

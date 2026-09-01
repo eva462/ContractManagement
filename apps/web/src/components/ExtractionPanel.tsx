@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import {
+  describeRedactions,
   formatFileSize,
   type ExtractionResult,
   type ExtractionStatus,
+  type PagePreview,
+  type RedactionRect,
 } from '@contract/shared'
 import { ApiError } from '../api/client'
 import { extractionApi } from '../api/resources'
+import { RedactionDialog } from './RedactionDialog'
 import { Button, Spinner, cx } from './ui'
 
 /**
@@ -18,17 +22,21 @@ export function ExtractionPanel({
   disabled,
 }: {
   /** 识别成功后把结果和原文件交给表单：结果预填字段，原文件在保存后自动存为附件 */
-  onExtracted: (result: ExtractionResult, file: File) => void
+  onExtracted: (result: ExtractionResult, file: File, redactions: RedactionRect[]) => void
   disabled?: boolean
 }): ReactNode {
   const fileRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const [status, setStatus] = useState<(ExtractionStatus & { supportedMimes: string[] }) | null>(null)
-  const [busy, setBusy] = useState(false)
+  // 两步：先本地渲染预览让人涂抹，确认后才真的发出去
+  const [stage, setStage] = useState<'idle' | 'preview' | 'redacting' | 'extracting'>('idle')
+  const [pages, setPages] = useState<PagePreview[]>([])
+  const [pending, setPending] = useState<File | null>(null)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
+  const busy = stage !== 'idle'
 
   useEffect(() => {
     const ac = new AbortController()
@@ -43,23 +51,58 @@ export function ExtractionPanel({
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
+  /**
+   * 第一步：本地渲染页面预览，打开涂抹界面。
+   * 这一步**不出网** —— 只是把 PDF 渲染成图给人看着画框。
+   */
   const run = async (file: File): Promise<void> => {
     setError(null)
     setFileName(file.name)
-    setBusy(true)
+    setStage('preview')
     abortRef.current = new AbortController()
     try {
-      const { data } = await extractionApi.extract(file, abortRef.current.signal)
-      onExtracted(data, file)
+      const { data } = await extractionApi.preview(file, abortRef.current.signal)
+      setPages(data)
+      setPending(file)
+      setStage('redacting')
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return
+      setError(err instanceof ApiError ? err.message : '打开文件失败，请换一份或手工录入')
+      setFileName(null)
+      setStage('idle')
+    } finally {
+      abortRef.current = null
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  /** 第二步：带着涂抹区去识别。被涂的内容不会出现在发出去的载荷里。 */
+  const runExtract = async (rects: RedactionRect[]): Promise<void> => {
+    if (!pending) return
+    const file = pending
+    setPages([])
+    setPending(null)
+    setStage('extracting')
+    setError(null)
+    abortRef.current = new AbortController()
+    try {
+      const { data } = await extractionApi.extract(file, rects, abortRef.current.signal)
+      onExtracted(data, file, rects)
     } catch (err) {
       if ((err as Error).name === 'AbortError') return
       setError(err instanceof ApiError ? err.message : '识别失败，请重试或手工录入')
       setFileName(null)
     } finally {
-      setBusy(false)
+      setStage('idle')
       abortRef.current = null
-      if (fileRef.current) fileRef.current.value = ''
     }
+  }
+
+  const cancelRedaction = (): void => {
+    setPages([])
+    setPending(null)
+    setFileName(null)
+    setStage('idle')
   }
 
   const onDrop = (e: DragEvent): void => {
@@ -94,7 +137,9 @@ export function ExtractionPanel({
           {busy ? (
             <p className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <Spinner className="text-slate-600" />
-              正在识别「{fileName}」…扫描件通常需要 10–20 秒
+              {stage === 'preview'
+                ? `正在打开「${fileName}」…`
+                : `正在识别「${fileName}」…扫描件通常需要 10–20 秒`}
             </p>
           ) : (
             <>
@@ -102,7 +147,8 @@ export function ExtractionPanel({
                 上传合同文件，自动填写下面的字段
               </p>
               <p className="mt-0.5 text-xs text-slate-600">
-                支持 PDF 和图片，也可以直接把文件拖到这里。识别结果需要你核对后才会保存。
+                支持 PDF 和图片，也可以直接把文件拖到这里。
+                <strong>选完文件可以先涂抹掉不想外发的内容</strong>，再开始识别。
               </p>
             </>
           )}
@@ -143,8 +189,17 @@ export function ExtractionPanel({
       )}
 
       <p className="mt-2.5 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-600">
-        合同原件会上传到 DeepSeek 服务器完成识别。不希望出网的合同请直接手工录入。
+        合同会上传到 DeepSeek 服务器完成识别 ——
+        <strong>涂抹掉的部分不会发出去</strong>。整份都不希望出网的合同请直接手工录入。
       </p>
+
+      <RedactionDialog
+        open={stage === 'redacting'}
+        fileName={fileName ?? ''}
+        pages={pages}
+        onCancel={cancelRedaction}
+        onConfirm={(rects) => void runExtract(rects)}
+      />
     </div>
   )
 }
@@ -153,10 +208,12 @@ export function ExtractionPanel({
 export function ExtractionSummary({
   result,
   file,
+  redactions,
   onClear,
 }: {
   result: ExtractionResult
   file: File | null
+  redactions: RedactionRect[]
   onClear: () => void
 }): ReactNode {
   const { fieldCount, lowConfidenceCount, model, mode, pageCount, elapsedMs } = result.meta
@@ -179,6 +236,11 @@ export function ExtractionSummary({
             {pageCount} 页 · {mode === 'text' ? 'PDF 文本层' : '图像识别'} · {model} ·{' '}
             {(elapsedMs / 1000).toFixed(1)} 秒
           </p>
+          {redactions.length > 0 && (
+            <p className="mt-1 text-xs font-medium text-emerald-800">
+              {describeRedactions(redactions)} —— 这些内容没有发出去，相关字段请手工填写
+            </p>
+          )}
           {file && (
             <p className="mt-1 text-xs text-emerald-700/80">
               保存后这份文件会自动存为该合同的附件（合同正本），不用再传一次。

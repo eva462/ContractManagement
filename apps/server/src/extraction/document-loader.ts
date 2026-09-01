@@ -1,5 +1,5 @@
 import * as mupdf from 'mupdf'
-import { ErrorCode, type RedactionRect } from '@contract/shared'
+import { ErrorCode, type PagePreview, type RedactionRect } from '@contract/shared'
 import { badRequest } from '../http/errors.js'
 import { extractPageTextRedacted, paintRedactions, toPageRects } from './redact.js'
 
@@ -188,16 +188,6 @@ function renderTiles(
   }
 
   return images
-}
-
-/** 一页预览图，前端拿它当画布拉涂抹框 */
-export interface PagePreview {
-  pageIndex: number
-  /** base64 PNG（data URI 的 payload 部分） */
-  imageBase64: string
-  /** 渲染出来的像素尺寸，前端按这个比例换算归一化坐标 */
-  width: number
-  height: number
 }
 
 /** 预览用的渲染倍率。比识别用的低 —— 只是给人看着画框，不用那么清晰。 */
