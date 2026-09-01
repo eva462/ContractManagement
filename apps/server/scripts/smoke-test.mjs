@@ -571,6 +571,94 @@ async function main() {
   const delUnused = await call('DELETE', `/dict-items/${tempItem.body?.data?.id}`, { token: manager })
   check('没被引用的字典项可以删除', delUnused.status === 200, `实际 ${delUnused.status}`)
 
+  section('H · AI 审查要点与审查结果')
+
+  // 注意：这一节**刻意不触发真实模型调用**。跑真实审查要花钱、要 40 秒，
+  // 而且结果不确定 —— 那是 verify:live 的事。这里只验接口契约和权限。
+
+  const tpls = await call('GET', '/review-templates', { token: staff })
+  const generic = (tpls.body?.data ?? []).find((t) => t.contractType === null)
+  check('通用审查模板会自动建出来', !!generic, JSON.stringify(tpls.body?.data?.length))
+  check('通用模板自带审查要点', (generic?.rules ?? []).length > 0, `${generic?.rules?.length ?? 0} 条`)
+  check(
+    '每条要点都写得足够具体（>=10 字，太笼统模型只会说废话）',
+    (generic?.rules ?? []).every((r) => r.detail.trim().length >= 10),
+  )
+
+  const staffRule = await call('POST', '/review-templates/generic/rules', {
+    token: staff,
+    body: { title: '[冒烟] 经办人不该能加', detail: '经办人不应该能改审查要点，这条应该被拒。' },
+  })
+  check('经办人不能改审查要点', staffRule.status === 403, `实际 ${staffRule.status}`)
+
+  const vagueRule = await call('POST', '/review-templates/generic/rules', {
+    token: manager,
+    body: { title: '[冒烟] 太笼统', detail: '看付款' },
+  })
+  check('过于笼统的要点被拒', vagueRule.status === 400 && issueFields(vagueRule).includes('detail'))
+
+  const newRule = await call('POST', '/review-templates/generic/rules', {
+    token: manager,
+    body: {
+      title: `[冒烟] 临时要点 ${suffix}`,
+      detail: '检查合同是否约定了验收标准。没有可量化的验收标准就无法判断是否履约完成，属于风险。',
+      severity: 'HIGH',
+      sortOrder: 99,
+    },
+  })
+  check('管理员可以新增审查要点', newRule.status === 201, `实际 ${newRule.status}`)
+  const ruleId = newRule.body?.data?.id
+
+  const afterAdd = await call('GET', '/review-templates', { token: manager })
+  const genericAfter = (afterAdd.body?.data ?? []).find((t) => t.contractType === null)
+  check('新增的要点出现在模板里', (genericAfter?.rules ?? []).some((r) => r.id === ruleId))
+  check(
+    '新增的要点默认不是 AI 草稿',
+    (genericAfter?.rules ?? []).find((r) => r.id === ruleId)?.isDraft === false,
+  )
+
+  const disableRule = await call('PATCH', `/review-rules/${ruleId}`, {
+    token: manager,
+    body: { isActive: false },
+  })
+  check('可以停用要点', disableRule.body?.data?.isActive === false)
+
+  // 没审过的合同：返回 null 而不是 404 —— 前端据此显示「还没有审查过」
+  const fresh = await call('POST', '/contracts', {
+    token: staff,
+    body: { title: `[冒烟] 待审查合同 ${suffix}` },
+  })
+  const freshId = fresh.body?.data?.id
+  const noReview = await call('GET', `/contracts/${freshId}/review`, { token: staff })
+  check('没审过的合同返回 null 而不是 404', noReview.status === 200 && noReview.body?.data === null)
+
+  const staffRun = await call('POST', `/contracts/${freshId}/review`, { token: staff })
+  check('经办人不能手动触发审查', staffRun.status === 403, `实际 ${staffRun.status}`)
+
+  // 没有正本附件 —— 应该干净地失败，而不是抛 500，更不能去调模型
+  const noDoc = await call('POST', `/contracts/${freshId}/review`, { token: manager })
+  check('没有正本附件时审查失败而不是报错', noDoc.status === 200, `实际 ${noDoc.status}`)
+  check('失败状态记进了审查记录', noDoc.body?.data?.status === 'FAILED', noDoc.body?.data?.status)
+  check(
+    '失败原因说清了要传什么',
+    (noDoc.body?.data?.error ?? '').includes('附件'),
+    noDoc.body?.data?.error,
+  )
+  check('失败的审查不带任何风险点', (noDoc.body?.data?.findings ?? []).length === 0)
+
+  const stillDraft = await call('GET', `/contracts/${freshId}`, { token: staff })
+  check(
+    '审查失败不影响合同状态（审查只是辅助材料，不是关卡）',
+    stillDraft.body?.data?.status === 'DRAFT',
+    stillDraft.body?.data?.status,
+  )
+
+  const latest = await call('GET', `/contracts/${freshId}/review`, { token: staff })
+  check('失败那次也能被读回来', latest.body?.data?.id === noDoc.body?.data?.id)
+
+  const delRule = await call('DELETE', `/review-rules/${ruleId}`, { token: manager })
+  check('要点可以删除（风险点存的是标题快照，不会变孤儿）', delRule.status === 200)
+
   /* ── 汇总 ─────────────────────────────────────────────────────── */
   console.log(`\n${'─'.repeat(60)}`)
   if (failed === 0) {

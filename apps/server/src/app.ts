@@ -10,6 +10,7 @@ import { authRoutes } from './modules/auth/routes.js'
 import { contractRoutes } from './modules/contract/routes.js'
 import { dictRoutes } from './modules/dict/routes.js'
 import { extractionRoutes } from './modules/extraction/routes.js'
+import { reviewRoutes } from './modules/review/routes.js'
 import { userRoutes } from './modules/user/routes.js'
 
 export function buildApp(): FastifyInstance {
@@ -44,6 +45,7 @@ export function buildApp(): FastifyInstance {
   app.register(userRoutes, { prefix: '/api/v1' })
   app.register(extractionRoutes, { prefix: '/api/v1' })
   app.register(dictRoutes, { prefix: '/api/v1' })
+  app.register(reviewRoutes, { prefix: '/api/v1' })
 
   // 单源模式：后端同时托管前端。只在设了 SERVE_WEB_DIR 时启用，
   // 本地开发不受影响（前端仍跑 Vite dev server）。

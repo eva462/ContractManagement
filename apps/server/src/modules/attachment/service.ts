@@ -10,6 +10,7 @@ import {
   type AttachmentDto,
   type AttachmentType,
   type ContractStatus,
+  type RedactionRect,
 } from '@contract/shared'
 import { storage } from '../../context.js'
 import { db } from '../../db.js'
@@ -84,6 +85,8 @@ export interface UploadInput {
   mimeType: string
   stream: Readable
   attachmentType: AttachmentType
+  /** 上传时的涂抹区域，供风险审查沿用 */
+  redactions?: RedactionRect[]
 }
 
 export async function uploadAttachment(
@@ -138,6 +141,8 @@ export async function uploadAttachment(
           sha256: saved.sha256,
           storageKey: saved.key,
           attachmentType: input.attachmentType,
+          // 供风险审查沿用同一份涂抹决定
+          redactions: input.redactions?.length ? (input.redactions as never) : undefined,
           uploadedById: actor.id,
         },
         include: attachmentInclude,

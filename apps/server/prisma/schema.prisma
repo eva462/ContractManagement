@@ -97,6 +97,7 @@ model User {
   auditLogs         AuditLog[]
   approvalsAssigned ContractApproval[]   @relation("ApprovalApprover")
   approvalsDecided  ContractApproval[]   @relation("ApprovalDecidedBy")
+  reviewsCreated    ContractReview[]     @relation("ReviewCreatedBy")
   refreshTokens     RefreshToken[]
 
   @@map("users")
@@ -165,6 +166,7 @@ model Contract {
   updatedBy   User?                @relation("ContractUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   attachments ContractAttachment[]
   approvals   ContractApproval[]
+  reviews     ContractReview[]
 
   @@index([status])
   @@index([ownerId])
@@ -191,6 +193,11 @@ model ContractAttachment {
 
   // 存储层的键。当前是本地磁盘相对路径，换成 S3 时这里放对象 key，业务代码不用改。
   storageKey String
+
+  /// 这份文件上传时用户涂抹了哪些区域（归一化坐标）。
+  /// **风险审查会复用它** —— 存档的原件是完整的，但送去 AI 审查时要沿用
+  /// 上传者当初的涂抹决定，不能把涂掉的内容又发出去。
+  redactions Json?
 
   attachmentType AttachmentType @default(ANNEX)
   uploadedById   String?
@@ -284,4 +291,108 @@ model DictItem {
   @@unique([dictCode, itemCode])
   @@index([dictCode, isActive, sortOrder])
   @@map("dict_items")
+}
+
+/// 风险审查的严重度。只用于排序和着色，不阻断任何流转。
+enum RiskSeverity {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// 审查模板。一个合同类型一套。
+///
+/// contractType 为 null 的那条是**通用模板**，没有专属模板的类型都用它兜底。
+/// 当前只做了通用模板；以后要按类型细分，加数据行即可，不用改表。
+model ReviewTemplate {
+  id           String  @id @default(cuid())
+  /// 引用 dict_items 里 CONTRACT_TYPE 的 itemCode；null = 通用兜底
+  contractType String? @unique
+  name         String
+  isActive     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rules   ReviewRule[]
+  reviews ContractReview[]
+
+  @@map("review_templates")
+}
+
+/// 一条审查要点。detail 会直接拼进提示词，所以写得越具体，模型越不容易发挥。
+model ReviewRule {
+  id         String       @id @default(cuid())
+  templateId String
+  title      String
+  detail     String
+  severity   RiskSeverity @default(MEDIUM)
+  sortOrder  Int          @default(0)
+  isActive   Boolean      @default(true)
+  /// 由 AI 生成、还没被人逐条确认过的规则。界面上要标出来。
+  isDraft    Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  template ReviewTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId, sortOrder])
+  @@map("review_rules")
+}
+
+/// 一次审查的执行记录。合同可以重复审，保留每一次。
+model ContractReview {
+  id         String  @id @default(cuid())
+  contractId String
+  templateId String?
+
+  status        ReviewStatus @default(RUNNING)
+  model         String?
+  /// 失败原因，直接显示给用户
+  error         String?
+  elapsedMs     Int?
+  /// 审查时被涂抹掉了多少处 —— 界面要提示「本次审查未包含被涂抹的部分」
+  redactedCount Int          @default(0)
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  contract  Contract        @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  template  ReviewTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdBy User?           @relation("ReviewCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  findings  ReviewFinding[]
+
+  @@index([contractId, createdAt])
+  @@map("contract_reviews")
+}
+
+enum ReviewStatus {
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// 一个风险点。
+///
+/// **evidence 必填**：没有原文依据的风险点一律丢弃，不入库。这是防幻觉最
+/// 有效的一招 —— 模型编不出合同里没有的句子，编了也一眼能看穿。
+model ReviewFinding {
+  id       String @id @default(cuid())
+  reviewId String
+
+  /// 命中的规则标题（快照）。规则以后改了，历史记录不跟着变。
+  ruleTitle  String
+  severity   RiskSeverity
+  summary    String
+  /// 合同原文片段
+  evidence   String
+  suggestion String?
+  sortOrder  Int          @default(0)
+
+  review ContractReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, sortOrder])
+  @@map("review_findings")
 }

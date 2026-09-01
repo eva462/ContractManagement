@@ -5,6 +5,7 @@ import {
   CONTRACT_STATUS_LABEL,
   CURRENCY_LABEL,
   formatAmount,
+  roleAtLeast,
   todayString,
   type ContractAction,
   type ContractDetail,
@@ -12,8 +13,10 @@ import {
 import { ApiError } from '../api/client'
 import { useDict } from '../api/dict'
 import { contractApi } from '../api/resources'
+import { useAuth } from '../auth/AuthContext'
 import { AttachmentPanel } from '../components/AttachmentPanel'
 import { AuditTimeline } from '../components/AuditTimeline'
+import { ReviewPanel } from '../components/ReviewPanel'
 import { ConfirmDialog, Modal, useToast } from '../components/overlays'
 import {
   Button,
@@ -43,6 +46,7 @@ export function ContractDetailPage(): ReactNode {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const toast = useToast()
+  const { user } = useAuth()
 
   const [contract, setContract] = useState<ContractDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -352,6 +356,12 @@ export function ContractDetailPage(): ReactNode {
             canUpload={p.canUploadAttachment}
             canDelete={p.canDeleteAttachment}
             onChanged={() => setRefreshKey((k) => k + 1)}
+          />
+
+          {/* 审查结果只是给审核人看的参考，放在附件下面 —— 它依赖附件里的合同正本 */}
+          <ReviewPanel
+            contractId={contract.id}
+            canRerun={!!user && roleAtLeast(user.role, 'MANAGER')}
           />
         </div>
 

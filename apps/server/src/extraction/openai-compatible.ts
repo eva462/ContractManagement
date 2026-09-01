@@ -1,8 +1,8 @@
 import type { ExtractedFields, ExtractionResult, ExtractionStatus } from '@contract/shared'
-import { env } from '../env.js'
+import { callJsonModel, type ChatMessage } from '../ai/json-chat.js'
 import type { LoadedDocument } from './document-loader.js'
-import { extractJsonObject, validateAndNormalize } from './parse.js'
-import { SYSTEM_PROMPT, buildUserContent, type ChatContentPart } from './prompt.js'
+import { validateAndNormalize } from './parse.js'
+import { SYSTEM_PROMPT, buildUserContent } from './prompt.js'
 import type { FieldExtractor } from './provider.js'
 
 /**
@@ -32,18 +32,11 @@ export interface ProviderConfig {
 /** 模型返回不可用（空内容 / 非法 JSON / 一个字段都没抽到）时的重试次数 */
 const MAX_ATTEMPTS = 3
 
-interface ChatMessage {
-  role: 'system' | 'user'
-  content: string | ChatContentPart[]
-}
-
 export class OpenAiCompatibleExtractor implements FieldExtractor {
   readonly name: string
-  private readonly endpoint: string
 
   constructor(private readonly config: ProviderConfig) {
     this.name = config.name
-    this.endpoint = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`
   }
 
   status(): ExtractionStatus {
@@ -100,46 +93,17 @@ export class OpenAiCompatibleExtractor implements FieldExtractor {
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildUserContent(doc, attempt) },
     ]
-
-    // 自带超时，避免模型卡住时前端一直转圈
-    const timeout = AbortSignal.timeout(env.extractionTimeoutMs)
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
-
-    const res = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.config.apiKey}`,
-      },
-      body: JSON.stringify({
+    return callJsonModel(
+      {
+        name: this.config.name,
+        baseUrl: this.config.baseUrl,
+        apiKey: this.config.apiKey,
         model,
-        messages,
-        ...(this.config.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-        // 抽取任务要的是确定性，不要发挥
-        temperature: 0,
-        max_tokens: 4000,
-      }),
-      signal: combined,
-    })
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      if (res.status === 401 || res.status === 403) {
-        throw new Error(`${this.name} 的 API key 无效或已过期`)
-      }
-      if (res.status === 429) {
-        throw new Error(`${this.name} 接口限流，请稍后再试`)
-      }
-      throw new Error(`${this.name} 接口返回 ${res.status}：${body.slice(0, 200)}`)
-    }
-
-    const json = (await res.json()) as {
-      choices?: { message?: { content?: string } }[]
-    }
-    const content = json.choices?.[0]?.message?.content?.trim()
-    if (!content) throw new Error('模型返回了空内容')
-
-    return extractJsonObject(content)
+        jsonMode: this.config.jsonMode,
+      },
+      messages,
+      { signal },
+    )
   }
 }
 

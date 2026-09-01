@@ -10,6 +10,7 @@ import { ApiError } from '../api/client'
 import { dictApi, useDict } from '../api/dict'
 import { useAuth } from '../auth/AuthContext'
 import { ConfirmDialog, Modal, useToast } from '../components/overlays'
+import { ReviewRuleSettings } from '../components/ReviewRuleSettings'
 import {
   Button,
   Card,
@@ -22,10 +23,11 @@ import {
   cx,
 } from '../components/ui'
 
-type Tab = 'dict' | 'suppliers' | 'users'
+type Tab = 'dict' | 'review' | 'suppliers' | 'users'
 
 const TABS: { key: Tab; label: string; ready: boolean }[] = [
   { key: 'dict', label: '数据字典', ready: true },
+  { key: 'review', label: 'AI 审查要点', ready: true },
   { key: 'suppliers', label: '供应商', ready: false },
   { key: 'users', label: '用户与权限', ready: false },
 ]
@@ -70,6 +72,7 @@ export function SettingsPage(): ReactNode {
       </div>
 
       {tab === 'dict' && <DictSettings />}
+      {tab === 'review' && <ReviewRuleSettings />}
       {tab === 'suppliers' && <SupplierPlaceholder />}
       {tab === 'users' && <UserPlaceholder />}
     </div>

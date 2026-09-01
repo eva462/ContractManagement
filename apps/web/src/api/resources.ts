@@ -12,6 +12,11 @@ import type {
   ContractType,
   LoginResult,
   UserBrief,
+  ContractReviewDto,
+  ReviewRuleCreateInput,
+  ReviewRuleUpdateInput,
+  ReviewRuleDto,
+  ReviewTemplateDto,
 } from '@contract/shared'
 import { clearSession, getSession, request, saveSession, type ApiResult } from './client'
 
@@ -130,4 +135,26 @@ export const extractionApi = {
 
 export const userApi = {
   list: (signal?: AbortSignal) => request<UserBrief[]>('/users', { signal }),
+}
+
+/* ── 风险审查 ───────────────────────────────────────────────────────── */
+
+export const reviewApi = {
+  /** 详情页展示用。没审过返回 data:null。 */
+  latest: (contractId: string, signal?: AbortSignal) =>
+    request<ContractReviewDto | null>(`/contracts/${contractId}/review`, { signal }),
+
+  /** 手动跑一次审查。**同步等结果，可能要 30–60 秒**，界面上要转圈。 */
+  run: (contractId: string) =>
+    request<ContractReviewDto>(`/contracts/${contractId}/review`, { method: 'POST' }),
+
+  templates: (signal?: AbortSignal) => request<ReviewTemplateDto[]>('/review-templates', { signal }),
+
+  createRule: (body: ReviewRuleCreateInput) =>
+    request<ReviewRuleDto>('/review-templates/generic/rules', { method: 'POST', body }),
+
+  updateRule: (id: string, body: ReviewRuleUpdateInput) =>
+    request<ReviewRuleDto>(`/review-rules/${id}`, { method: 'PATCH', body }),
+
+  removeRule: (id: string) => request(`/review-rules/${id}`, { method: 'DELETE' }),
 }

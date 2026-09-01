@@ -1,8 +1,10 @@
+import { Readable } from 'node:stream'
 import type { FastifyInstance, FastifyReply } from 'fastify'
 import {
   AttachmentUploadMetaSchema,
   ErrorCode,
   PREVIEWABLE_MIMES,
+  parseRedactions,
   type AttachmentType,
 } from '@contract/shared'
 import { currentUser, requestMeta, requireAuth } from '../../auth/guards.js'
@@ -52,22 +54,41 @@ export async function attachmentRoutes(app: FastifyInstance): Promise<void> {
   app.post('/contracts/:id/attachments', async (req, reply) => {
     const { id } = req.params as { id: string }
 
-    const file = await req.file()
-    if (!file) throw badRequest(ErrorCode.VALIDATION_FAILED, '没有收到文件')
+    // 遍历各个 part 而不是 req.file() + file.fields：后者只含**文件之前**
+    // 已解析的字段，字段排在文件后面就永远读不到。踩过一次（涂抹静默失效）。
+    let buffer: Buffer | null = null
+    let fileName = ''
+    let mimeType = ''
+    const fields: Record<string, string> = {}
 
-    // multipart 的字段值在 file.fields 里，取出附件分类
-    const rawType = (file.fields?.attachmentType as { value?: string } | undefined)?.value
+    for await (const part of req.parts()) {
+      if (part.type === 'file') {
+        // 先读成 buffer 再交给存储层。附件上限 50MB，内存扛得住，
+        // 换来的是「字段和文件的先后顺序无所谓」。
+        buffer = await part.toBuffer()
+        fileName = part.filename
+        mimeType = part.mimetype
+      } else {
+        fields[part.fieldname] = String(part.value)
+      }
+    }
+
+    if (!buffer) throw badRequest(ErrorCode.VALIDATION_FAILED, '没有收到文件')
+
     const { attachmentType } = AttachmentUploadMetaSchema.parse({
-      attachmentType: rawType ?? undefined,
+      attachmentType: fields.attachmentType || undefined,
     })
 
     const dto = await uploadAttachment(
       {
         contractId: id,
-        fileName: file.filename,
-        mimeType: file.mimetype,
-        stream: file.file,
+        fileName,
+        mimeType,
+        stream: Readable.from(buffer),
         attachmentType: attachmentType as AttachmentType,
+        // 这份文件上传时涂抹了哪些区域。**风险审查会沿用它** ——
+        // 存档的是完整原件，但送去 AI 审查时不该把涂掉的内容又发一遍。
+        redactions: parseRedactions(fields.redactions),
       },
       actorOf(currentUser(req)),
       requestMeta(req),

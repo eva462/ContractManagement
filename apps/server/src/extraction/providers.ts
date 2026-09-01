@@ -50,6 +50,20 @@ function configFor(id: ProviderId): ProviderConfig | null {
   }
 }
 
+/**
+ * 当前生效的供应商配置。风险审查也要调模型，但它不走 FieldExtractor 接口
+ * （那是「文档 → 字段」专用的），所以直接把配置拿出来用底层 JSON 调用。
+ */
+export function activeProviderConfig(): ProviderConfig | null {
+  const preferred = env.extractionProvider as ProviderId | ''
+  if (preferred) return configFor(preferred)
+  for (const id of PROVIDER_IDS) {
+    const c = configFor(id)
+    if (c) return c
+  }
+  return null
+}
+
 export function buildExtractor(id: ProviderId): FieldExtractor | null {
   const config = configFor(id)
   return config ? new OpenAiCompatibleExtractor(config) : null

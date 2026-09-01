@@ -33,6 +33,7 @@ import {
 } from './mapper.js'
 import { canDelete, canEdit, canRunAction } from './permissions.js'
 import { assertValidDictItem, contractTypePrefix, dictLabelMap } from '../dict/service.js'
+import { scheduleReview } from '../review/service.js'
 import type { Actor, ActingUser, RequestMeta } from '../../types.js'
 
 /* ── 值的形状转换 ───────────────────────────────────────────────────── */
@@ -506,7 +507,7 @@ export async function changeContractStatus(
             ? 'WITHDRAW'
             : 'STATUS_CHANGE'
 
-  return db.$transaction(async (tx) => {
+  const detail = await db.$transaction(async (tx) => {
     const updated = await tx.contract.update({
       where: { id },
       data: data as never,
@@ -533,6 +534,14 @@ export async function changeContractStatus(
     })
     return toDetail(updated as ContractRow, actor)
   })
+
+  // 提交审核后在后台跑一次 AI 审查。**刻意不 await** —— 模型调用要 10–40 秒，
+  // 不能让用户点了「提交审核」之后干等。审查是给审核人看的辅助材料，
+  // 跑失败也绝不影响合同状态（失败原因写进那条 review 记录）。
+  // 放在事务外：事务已经提交，审查读到的一定是新状态。
+  if (input.action === 'SUBMIT') scheduleReview(id, actor.id)
+
+  return detail
 }
 
 /**
