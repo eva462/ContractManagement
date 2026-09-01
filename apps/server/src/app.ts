@@ -113,6 +113,23 @@ export function buildApp(): FastifyInstance {
       return reply.code(status).send(body)
     }
 
+    // 数据库连不上。本地开发几乎总是「Docker Desktop 没开」，而 Prisma 的原始
+    // 报错是一大段带绝对路径和代码片段的英文 —— 直接吐给前端既难看又没用。
+    // 给一句能照着做的话，顺便别算成 500（这不是代码故障，是环境没起来）。
+    //
+    // 认名字而不是 errorCode：实测 Prisma 6.19 在这种情况下 `code` 和
+    // `errorCode` **都是 undefined**，只有 name 靠得住。
+    if ((err as { name?: string }).name === 'PrismaClientInitializationError') {
+      req.log.error({ err }, 'database unreachable')
+      const body: ApiFailure = {
+        error: {
+          code: ErrorCode.DB_UNAVAILABLE,
+          message: '连不上数据库。确认 Docker Desktop 已启动、容器在跑（npm run db:up），再重试。',
+        },
+      }
+      return reply.code(503).send(body)
+    }
+
     // 剩下的都是没预料到的，日志里留全量，回给前端的只有一句话
     req.log.error({ err }, 'unhandled error')
     const detail = err instanceof Error ? err.message : String(err)

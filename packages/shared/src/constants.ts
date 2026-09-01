@@ -277,6 +277,8 @@ export const ErrorCode = {
   FORBIDDEN: 'FORBIDDEN',
   BAD_CREDENTIALS: 'BAD_CREDENTIALS',
   TOKEN_EXPIRED: 'TOKEN_EXPIRED',
+  /** 数据库连不上。本地开发最常见的原因是 Docker Desktop 没启动。 */
+  DB_UNAVAILABLE: 'DB_UNAVAILABLE',
   INTERNAL: 'INTERNAL',
 } as const
 
