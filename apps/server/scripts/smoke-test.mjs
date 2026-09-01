@@ -234,14 +234,83 @@ async function main() {
   const noop = await call('PATCH', `/contracts/${draftId}`, { token: staff, body: { title: '[冒烟] 完整采购合同' } })
   check('提交与原值相同的内容不报错', noop.status === 200)
 
-  const activate = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'ACTIVATE' } })
-  check('经办人本人可以提交生效', activate.status === 200 && activate.body?.data?.status === 'ACTIVE')
+  /* 审签全流程：草稿 → 待审核 → 待签署 → 待归档 → 履行中 */
+
+  const submit = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'SUBMIT' } })
+  check('经办人本人可以提交审核', submit.status === 200 && submit.body?.data?.status === 'PENDING_APPROVAL')
+
+  const editPending = await call('PATCH', `/contracts/${draftId}`, { token: staff, body: { remark: '送审后偷偷改' } })
+  check('送审后不能再编辑（要改先撤回）', errCode(editPending) === 'CONTRACT_READONLY', `实际 ${editPending.status}/${errCode(editPending)}`)
+
+  // 审批回避：staff 是经办人，就算把他当审批人也不能审自己的
+  const selfApprove = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'APPROVE' } })
+  check('经办人不能审核自己提交的合同', selfApprove.status === 403, `实际 ${selfApprove.status}`)
+
+  const rejectNoComment = await call('POST', `/contracts/${draftId}/status`, { token: manager, body: { action: 'REJECT' } })
+  check('驳回不写意见被拦', rejectNoComment.status === 400 && issueFields(rejectNoComment).includes('comment'))
+
+  const reject = await call('POST', `/contracts/${draftId}/status`, {
+    token: manager,
+    body: { action: 'REJECT', comment: '金额与预算不符，请核对后重报' },
+  })
+  check('MANAGER 驳回后回到草稿', reject.body?.data?.status === 'DRAFT')
+
+  const editAfterReject = await call('PATCH', `/contracts/${draftId}`, { token: staff, body: { amount: '120000.00' } })
+  check('驳回后又可以编辑了', editAfterReject.status === 200 && editAfterReject.body?.data?.amount === '120000.00')
+
+  await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'SUBMIT' } })
+  const withdraw = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'WITHDRAW' } })
+  check('经办人可以撤回自己提交的合同', withdraw.body?.data?.status === 'DRAFT')
+
+  await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'SUBMIT' } })
+  const approve = await call('POST', `/contracts/${draftId}/status`, {
+    token: manager,
+    body: { action: 'APPROVE', comment: '同意' },
+  })
+  check('MANAGER 审核通过后转入待签署', approve.body?.data?.status === 'PENDING_SIGNING')
+
+  const signNoDate = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'MARK_SIGNED' } })
+  check('登记签署不填签署日期被拦', signNoDate.status === 400 && issueFields(signNoDate).includes('signedDate'))
+
+  const signed = await call('POST', `/contracts/${draftId}/status`, {
+    token: staff,
+    body: { action: 'MARK_SIGNED', signedDate: '2026-08-20' },
+  })
+  check('登记签署后转入待归档', signed.body?.data?.status === 'PENDING_FILING')
+
+  // 这是整套流程的关口：纸件没入档、扫描件没上传，就不让合同生效
+  const filingTooEarly = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'COMPLETE_FILING' } })
+  check(
+    '扫描件和存放位置都没有时，不能完成归档',
+    filingTooEarly.status === 400 && issueFields(filingTooEarly).includes('attachments'),
+    `实际 ${filingTooEarly.status} / ${issueFields(filingTooEarly).join(',')}`,
+  )
+
+  const tinyPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const scanFd = new FormData()
+  scanFd.append('attachmentType', 'ORIGINAL')
+  scanFd.append('file', new Blob([tinyPng], { type: 'image/png' }), '签署后扫描件.png')
+  const scanUp = await call('POST', `/contracts/${draftId}/attachments`, { token: staff, body: scanFd })
+  check('待归档状态下可以上传扫描件（附件没被锁）', scanUp.status === 201, `实际 ${scanUp.status}`)
+
+  const filingNoLocation = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'COMPLETE_FILING' } })
+  check(
+    '只传了扫描件、没填原件存放位置，仍然不放行',
+    filingNoLocation.status === 400 && issueFields(filingNoLocation).includes('originalLocation'),
+  )
+
+  await call('PATCH', `/contracts/${draftId}`, { token: staff, body: { originalLocation: '行政部档案柜 A-03' } })
+  const filed = await call('POST', `/contracts/${draftId}/status`, { token: staff, body: { action: 'COMPLETE_FILING' } })
+  check('扫描件和存放位置都齐了才生效', filed.body?.data?.status === 'ACTIVE', `实际 ${filed.body?.data?.status}`)
 
   const money = await call('PATCH', `/contracts/${draftId}`, {
     token: staff,
-    body: { amount: '120000.00', expiryDate: '2027-06-30' },
+    body: { expiryDate: '2027-06-30' },
   })
-  check('生效后仍可编辑（本人经办）', money.status === 200 && money.body?.data?.amount === '120000.00')
+  check('生效后仍可编辑（本人经办）', money.status === 200)
 
   const noReason = await call('POST', `/contracts/${draftId}/status`, { token: manager, body: { action: 'TERMINATE' } })
   check('终止时不填原因被拦', noReason.status === 400 && issueFields(noReason).includes('terminationReason'))
@@ -252,8 +321,8 @@ async function main() {
   })
   check('STAFF 无权终止合同', staffTerminate.status === 403, `实际 ${staffTerminate.status}`)
 
-  const badTransition = await call('POST', `/contracts/${draftId}/status`, { token: admin, body: { action: 'ACTIVATE' } })
-  check('对已生效的合同再次提交生效被拒', errCode(badTransition) === 'ILLEGAL_TRANSITION')
+  const badTransition = await call('POST', `/contracts/${draftId}/status`, { token: admin, body: { action: 'SUBMIT' } })
+  check('对已生效的合同再次提交审核被拒', errCode(badTransition) === 'ILLEGAL_TRANSITION')
 
   const otherContract = seeded.find((c) => c.owner?.username === 'manager' && c.status === 'ACTIVE')
   const crossEdit = await call('PATCH', `/contracts/${otherContract.id}`, { token: staff, body: { remark: '越权修改' } })
@@ -269,22 +338,22 @@ async function main() {
   })
   check('MANAGER 可以终止，并写入终止原因', terminate.body?.data?.terminationReason === '对方违约，协商解除')
 
-  const archive = await call('POST', `/contracts/${draftId}/status`, { token: manager, body: { action: 'ARCHIVE' } })
-  check('MANAGER 可以归档', archive.body?.data?.status === 'ARCHIVED')
-  check('归档时记录了归档前的状态', archive.body?.data?.archivedFrom === 'TERMINATED')
-  check('归档后 permissions 全部关闭', archive.body?.data?.permissions?.canEdit === false && archive.body?.data?.permissions?.canUploadAttachment === false)
+  const close = await call('POST', `/contracts/${draftId}/status`, { token: manager, body: { action: 'CLOSE' } })
+  check('MANAGER 可以完结合同', close.body?.data?.status === 'CLOSED')
+  check('完结时记录了完结前的状态', close.body?.data?.closedFrom === 'TERMINATED')
+  check('完结后 permissions 全部关闭', close.body?.data?.permissions?.canEdit === false && close.body?.data?.permissions?.canUploadAttachment === false)
 
-  const editArchived = await call('PATCH', `/contracts/${draftId}`, { token: admin, body: { remark: '改归档合同' } })
-  check('已归档合同连 ADMIN 也不能改', errCode(editArchived) === 'CONTRACT_READONLY', `实际 ${editArchived.status}/${errCode(editArchived)}`)
+  const editClosed = await call('PATCH', `/contracts/${draftId}`, { token: admin, body: { remark: '改已完结合同' } })
+  check('已完结合同连 ADMIN 也不能改', errCode(editClosed) === 'CONTRACT_READONLY', `实际 ${editClosed.status}/${errCode(editClosed)}`)
 
-  const managerUnarchive = await call('POST', `/contracts/${draftId}/status`, { token: manager, body: { action: 'UNARCHIVE' } })
-  check('MANAGER 无权解除归档', managerUnarchive.status === 403)
+  const managerReopen = await call('POST', `/contracts/${draftId}/status`, { token: manager, body: { action: 'REOPEN' } })
+  check('MANAGER 无权解除完结', managerReopen.status === 403)
 
-  const unarchive = await call('POST', `/contracts/${draftId}/status`, { token: admin, body: { action: 'UNARCHIVE' } })
-  check('ADMIN 解除归档后回到归档前的状态', unarchive.body?.data?.status === 'TERMINATED', `实际 ${unarchive.body?.data?.status}`)
+  const reopen = await call('POST', `/contracts/${draftId}/status`, { token: admin, body: { action: 'REOPEN' } })
+  check('ADMIN 解除完结后回到完结前的状态', reopen.body?.data?.status === 'TERMINATED', `实际 ${reopen.body?.data?.status}`)
 
   const delActive = await call('DELETE', `/contracts/${draftId}`, { token: admin })
-  check('非草稿状态不能删除，只能归档', errCode(delActive) === 'CONTRACT_NOT_DELETABLE')
+  check('非草稿状态不能删除，只能完结', errCode(delActive) === 'CONTRACT_NOT_DELETABLE')
 
   const tempDraft = await call('POST', '/contracts', { token: staff, body: { title: '[冒烟] 待删除草稿' } })
   const delDraft = await call('DELETE', `/contracts/${tempDraft.body.data.id}`, { token: staff })
@@ -337,11 +406,11 @@ async function main() {
   const stillThere = await call('GET', `/attachments/${attId}/download`, { token: staff, raw: true })
   check('另一条引用同一内容的附件仍可下载（去重删除没误删）', stillThere.status === 200)
 
-  const archivedContract = seeded.find((c) => c.status === 'ARCHIVED')
-  const fdArch = new FormData()
-  fdArch.append('file', new Blob([png], { type: 'image/png' }), 'x.png')
-  const upArch = await call('POST', `/contracts/${archivedContract.id}/attachments`, { token: admin, body: fdArch })
-  check('已归档合同不能上传附件', errCode(upArch) === 'CONTRACT_READONLY')
+  const closedContract = seeded.find((c) => c.status === 'CLOSED')
+  const fdClosed = new FormData()
+  fdClosed.append('file', new Blob([png], { type: 'image/png' }), 'x.png')
+  const upClosed = await call('POST', `/contracts/${closedContract.id}/attachments`, { token: admin, body: fdClosed })
+  check('已完结合同不能上传附件', errCode(upClosed) === 'CONTRACT_READONLY')
 
   /* ── F 操作留痕 ───────────────────────────────────────────────── */
   section('F · 操作留痕')
@@ -355,24 +424,43 @@ async function main() {
   check('状态流转有留痕', actions.includes('STATUS_CHANGE'))
   check('时间线按时间倒序', entries.every((e, i) => i === 0 || entries[i - 1].createdAt >= e.createdAt))
 
-  const moneyLog = entries.find((e) => e.action === 'UPDATE' && e.changes?.amount)
-  check('金额变更被记录', !!moneyLog)
-  check(
-    '摘要是人话且带操作人',
-    !!moneyLog && moneyLog.summary.includes('张三') && moneyLog.summary.includes('合同金额从 ¥100,000.00 修改为 ¥120,000.00'),
-    moneyLog?.summary,
-  )
+  check('留痕带来源 IP', entries.every((e) => e.ip !== null))
+  check('用户名是写入时的快照', entries.every((e) => typeof e.userName === 'string' && e.userName.length > 0))
+
+  // diff 的精确断言用一条**专属合同**，不搭主流程的车 ——
+  // 主流程的 PATCH 次数会随着状态机演进而变，写死条数的断言迟早失效。
+  const diffTarget = await call('POST', '/contracts', {
+    token: staff,
+    body: { title: '[冒烟] diff 专用', amountType: 'TAX_INCLUDED', amount: '100000.00', expiryDate: '2026-12-31' },
+  })
+  const diffId = diffTarget.body?.data?.id
+
+  await call('PATCH', `/contracts/${diffId}`, {
+    token: staff,
+    body: { amount: '120000.00', expiryDate: '2027-06-30' },
+  })
+  // 原样再提交一次，应该什么都不记
+  await call('PATCH', `/contracts/${diffId}`, {
+    token: staff,
+    body: { amount: '120000.00', expiryDate: '2027-06-30' },
+  })
+
+  const diffLogs = (await call('GET', `/contracts/${diffId}/audit-logs`, { token: staff })).body?.data ?? []
+  const updates = diffLogs.filter((e) => e.action === 'UPDATE')
+  check('无变化的提交没有产生多余留痕', updates.length === 1, `UPDATE 条数 ${updates.length}`)
+
+  const moneyLog = updates[0]
   check(
     '只记录真正变化的字段（没改的不出现在 diff 里）',
     !!moneyLog && Object.keys(moneyLog.changes).sort().join(',') === 'amount,expiryDate',
     moneyLog && Object.keys(moneyLog.changes).join(','),
   )
+  check(
+    '摘要是人话且带操作人',
+    !!moneyLog && moneyLog.summary.includes('张三') && moneyLog.summary.includes('合同金额从 ¥100,000.00 修改为 ¥120,000.00'),
+    moneyLog?.summary,
+  )
   check('diff 含 before/after 两侧', moneyLog?.changes?.amount?.before === '100000.00' && moneyLog?.changes?.amount?.after === '120000.00')
-  check('留痕带来源 IP', entries.every((e) => e.ip !== null))
-  check('用户名是写入时的快照', entries.every((e) => typeof e.userName === 'string' && e.userName.length > 0))
-
-  const noopLogCount = entries.filter((e) => e.action === 'UPDATE').length
-  check('无变化的提交没有产生多余留痕', noopLogCount === 2, `UPDATE 条数 ${noopLogCount}`)
 
   const attLogs = await call('GET', `/contracts/${uploadTarget.id}/audit-logs?pageSize=50`, { token: staff })
   const attActions = (attLogs.body?.data ?? []).map((e) => e.action)

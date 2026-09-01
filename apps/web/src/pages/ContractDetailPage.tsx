@@ -50,10 +50,12 @@ export function ContractDetailPage(): ReactNode {
   const [refreshKey, setRefreshKey] = useState(0)
 
   const [confirmAction, setConfirmAction] = useState<{ action: ContractAction; label: string; confirm: string; danger: boolean } | null>(null)
-  const [terminating, setTerminating] = useState(false)
-  const [terminateReason, setTerminateReason] = useState('')
-  const [terminateDate, setTerminateDate] = useState(todayString())
-  const [terminateErrors, setTerminateErrors] = useState<Record<string, string>>({})
+  // 需要额外填内容的动作（驳回要意见、登记签署要日期、终止要原因和日期）
+  // 共用一个弹窗，字段由动作定义驱动，不给每个动作写一个专属弹窗。
+  type PendingAction = ContractDetail['permissions']['actions'][number]
+  const [inputAction, setInputAction] = useState<PendingAction | null>(null)
+  const [actionForm, setActionForm] = useState({ comment: '', signedDate: '', reason: '', date: '' })
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -96,17 +98,29 @@ export function ContractDetailPage(): ReactNode {
       setContract(data)
       setRefreshKey((k) => k + 1)
       setConfirmAction(null)
-      setTerminating(false)
-      setTerminateReason('')
-      setTerminateErrors({})
+      setInputAction(null)
+      setActionForm({ comment: '', signedDate: '', reason: '', date: '' })
+      setActionErrors({})
       toast.success('操作完成')
     } catch (err) {
       if (err instanceof ApiError) {
         const fields = err.fieldErrors()
-        if (Object.keys(fields).length > 0 && action === 'TERMINATE') {
-          setTerminateErrors(fields)
+        // 后端返回的字段级错误映射回弹窗里的输入框
+        const toFormField: Record<string, string> = {
+          terminationReason: 'reason',
+          terminatedAt: 'date',
+          signedDate: 'signedDate',
+          comment: 'comment',
+        }
+        const mapped = Object.fromEntries(
+          Object.entries(fields)
+            .filter(([k]) => k in toFormField)
+            .map(([k, v]) => [toFormField[k], v]),
+        )
+        if (Object.keys(mapped).length > 0) {
+          setActionErrors(mapped)
         } else if (err.code === 'INCOMPLETE_FOR_ACTIVATION') {
-          // 提交生效缺字段：把缺的列出来，并指路去编辑页补
+          // 提交审核缺字段：把缺的列出来，并指路去编辑页补
           toast.error(`${err.message}：${err.issues.map((i) => i.message).join('；')}`)
           setConfirmAction(null)
         } else {
@@ -121,10 +135,11 @@ export function ContractDetailPage(): ReactNode {
     }
   }
 
-  const onActionClick = (a: ContractDetail['permissions']['actions'][number]): void => {
-    if (a.needsReason) {
-      setTerminateDate(todayString())
-      setTerminating(true)
+  const onActionClick = (a: PendingAction): void => {
+    if (a.needsReason || a.needsSignedDate) {
+      setActionForm({ comment: '', signedDate: todayString(), reason: '', date: todayString() })
+      setActionErrors({})
+      setInputAction(a)
       return
     }
     if (a.confirm) {
@@ -149,18 +164,30 @@ export function ContractDetailPage(): ReactNode {
     }
   }
 
-  const submitTerminate = (): void => {
+  const submitInputAction = (): void => {
+    if (!inputAction) return
     const errs: Record<string, string> = {}
-    if (!terminateReason.trim()) errs.terminationReason = '终止原因不能为空'
-    if (!terminateDate) errs.terminatedAt = '终止日期不能为空'
+    const payload: Record<string, string> = {}
+
+    if (inputAction.action === 'TERMINATE') {
+      if (!actionForm.reason.trim()) errs.reason = '终止原因不能为空'
+      if (!actionForm.date) errs.date = '终止日期不能为空'
+      payload.terminationReason = actionForm.reason.trim()
+      payload.terminatedAt = actionForm.date
+    } else if (inputAction.action === 'REJECT') {
+      if (!actionForm.comment.trim()) errs.comment = '请写明驳回原因，否则经办人不知道该改什么'
+      payload.comment = actionForm.comment.trim()
+    } else if (inputAction.needsSignedDate) {
+      if (!actionForm.signedDate) errs.signedDate = '签署日期不能为空'
+      payload.signedDate = actionForm.signedDate
+      if (actionForm.comment.trim()) payload.comment = actionForm.comment.trim()
+    }
+
     if (Object.keys(errs).length > 0) {
-      setTerminateErrors(errs)
+      setActionErrors(errs)
       return
     }
-    void runAction('TERMINATE', {
-      terminationReason: terminateReason.trim(),
-      terminatedAt: terminateDate,
-    })
+    void runAction(inputAction.action, payload)
   }
 
   if (loading) return <LoadingBlock />
@@ -179,7 +206,7 @@ export function ContractDetailPage(): ReactNode {
   if (!contract) return null
 
   const p = contract.permissions
-  const readonlyNotice = contract.status === 'ARCHIVED'
+  const readonlyNotice = contract.status === 'CLOSED'
 
   return (
     <div className="flex flex-col gap-4">
@@ -358,49 +385,98 @@ export function ContractDetailPage(): ReactNode {
       />
 
       <Modal
-        open={terminating}
-        title="终止合同"
-        onClose={() => setTerminating(false)}
+        open={inputAction !== null}
+        title={inputAction?.label ?? ''}
+        onClose={() => setInputAction(null)}
         footer={
           <>
-            <Button onClick={() => setTerminating(false)} disabled={busy}>
+            <Button onClick={() => setInputAction(null)} disabled={busy}>
               取消
             </Button>
-            <Button variant="danger" onClick={submitTerminate} loading={busy}>
-              确认终止
+            <Button
+              variant={inputAction?.danger ? 'danger' : 'primary'}
+              onClick={submitInputAction}
+              loading={busy}
+            >
+              确认{inputAction?.label ?? ''}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
-          <p className="text-sm text-slate-700">
-            终止后合同状态变为「已终止」，终止日期和原因都会写进操作留痕。
-          </p>
-          <Field label="终止日期" required error={terminateErrors.terminatedAt} htmlFor="terminatedAt">
-            <Input
-              id="terminatedAt"
-              type="date"
-              value={terminateDate}
-              invalid={!!terminateErrors.terminatedAt}
-              onChange={(e) => setTerminateDate(e.target.value)}
-              className="tabular"
-            />
-          </Field>
-          <Field
-            label="终止原因"
-            required
-            error={terminateErrors.terminationReason}
-            htmlFor="terminationReason"
-          >
-            <Textarea
-              id="terminationReason"
-              rows={3}
-              value={terminateReason}
-              invalid={!!terminateErrors.terminationReason}
-              onChange={(e) => setTerminateReason(e.target.value)}
-              placeholder="如：对方违约，双方协商一致提前解除"
-            />
-          </Field>
+          {inputAction?.action === 'TERMINATE' && (
+            <>
+              <p className="text-sm text-slate-700">
+                终止后合同状态变为「已终止」，终止日期和原因都会写进操作留痕。
+              </p>
+              <Field label="终止日期" required error={actionErrors.date} htmlFor="terminatedAt">
+                <Input
+                  id="terminatedAt"
+                  type="date"
+                  value={actionForm.date}
+                  invalid={!!actionErrors.date}
+                  onChange={(e) => setActionForm((f) => ({ ...f, date: e.target.value }))}
+                  className="tabular"
+                />
+              </Field>
+              <Field label="终止原因" required error={actionErrors.reason} htmlFor="terminationReason">
+                <Textarea
+                  id="terminationReason"
+                  rows={3}
+                  value={actionForm.reason}
+                  invalid={!!actionErrors.reason}
+                  onChange={(e) => setActionForm((f) => ({ ...f, reason: e.target.value }))}
+                  placeholder="如：对方违约，双方协商一致提前解除"
+                />
+              </Field>
+            </>
+          )}
+
+          {inputAction?.action === 'REJECT' && (
+            <>
+              <p className="text-sm text-slate-700">
+                驳回后合同回到草稿状态，经办人可以修改后重新提交。你的意见会写进操作留痕。
+              </p>
+              <Field label="驳回意见" required error={actionErrors.comment} htmlFor="rejectComment">
+                <Textarea
+                  id="rejectComment"
+                  rows={3}
+                  value={actionForm.comment}
+                  invalid={!!actionErrors.comment}
+                  onChange={(e) => setActionForm((f) => ({ ...f, comment: e.target.value }))}
+                  placeholder="写明哪里需要改，例如：金额与预算不符，请核对后重报"
+                />
+              </Field>
+            </>
+          )}
+
+          {inputAction?.needsSignedDate && (
+            <>
+              <p className="text-sm text-slate-700">
+                登记线下纸面签署完成的日期。登记后合同转入「待归档」，
+                需要上传签署后的扫描件并填写原件存放位置，才能正式生效。
+              </p>
+              <Field label="签署日期" required error={actionErrors.signedDate} htmlFor="signedDate">
+                <Input
+                  id="signedDate"
+                  type="date"
+                  value={actionForm.signedDate}
+                  invalid={!!actionErrors.signedDate}
+                  onChange={(e) => setActionForm((f) => ({ ...f, signedDate: e.target.value }))}
+                  className="tabular"
+                />
+              </Field>
+              <Field label="备注" hint="可不填" htmlFor="signComment">
+                <Textarea
+                  id="signComment"
+                  rows={2}
+                  value={actionForm.comment}
+                  onChange={(e) => setActionForm((f) => ({ ...f, comment: e.target.value }))}
+                  placeholder="如：双方已用印，原件一式两份"
+                />
+              </Field>
+            </>
+          )}
         </div>
       </Modal>
     </div>

@@ -40,10 +40,15 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 
 - **金额全程用字符串传输**，库里是 `DECIMAL(18,2)`。JSON 的 number 是双精度浮点，`123456789.15` 往返一次就变形。
 - **日期在网络上一律 `'YYYY-MM-DD'` 字符串**，只在写库前转 `Date`。这样不用处理时区。
-- **「已到期」不是存储状态**，由 `expiryDate` 实时派生（`computeExpiryState`）。存储状态只有 `DRAFT / ACTIVE / TERMINATED / ARCHIVED` 四个。所以不需要定时任务，也不会有「状态和日期对不上」的脏数据。
+- **「已到期」不是存储状态**，由 `expiryDate` 实时派生（`computeExpiryState`）。所以不需要定时任务，也不会有「状态和日期对不上」的脏数据。
+- **合同生命周期有 7 个状态**：`DRAFT → PENDING_APPROVAL → PENDING_SIGNING → PENDING_FILING → ACTIVE`，外加 `TERMINATED` 和 `CLOSED`。
+- **`PENDING_FILING`「待归档」和 `CLOSED`「已完结」是两个相反的概念**，别混。前者是纸件入档 + 扫描件上传，是**生效前的关口**；后者是合同完结封存，是**终点**。业务上都叫「归档」，代码里刻意用了两个词。
+- **「待归档 → 履行中」有双条件闸门**：至少一个「合同正本」附件 + 填了原件存放位置。这是整套流程的价值所在，别为了图方便绕开。
+- **审批回避写死在权限里**：经办人不能审自己提交的合同，角色再高也不行（`forbidOwner`）。
+- **状态流转规则全在 `packages/shared/src/constants.ts` 的 `CONTRACT_ACTIONS` 一张表里**。加状态或改规则改这张表，别在服务层散写 if。
 - **审计日志与业务写入必须同一事务。** `writeAudit()` 只接受事务客户端 `Tx`，用类型焊死了。
 - **审计日志只增不改不删。** 应用层没有 UPDATE/DELETE 接口，数据库层还有触发器兜底。因此引用 `audit_logs` 的外键必须是 `Restrict` 而不是 Prisma 默认的 `SetNull`。
-- **只有草稿能删。** 其他状态一律只能归档。归档后对所有人只读，ADMIN 也要先解除归档。
+- **只有草稿能删。** 其他状态一律只能完结。已完结对所有人只读，ADMIN 也要先解除完结。
 - **前端隐藏按钮不算权限**，后端每个接口都会再判一次。
 - **AI 识别结果永远不直接入库**，只预填表单，人核对后走与手工录入完全相同的接口和校验。
 - **PDF 解析/渲染/切块永远在本地做**（`extraction/document-loader.ts`），刻意不在可替换边界内——换 AI 供应商时这部分不受影响。
@@ -53,7 +58,7 @@ npm workspaces 单仓库 · Vite + React 19 + Tailwind v4（前端）· Fastify 
 ## 测试
 
 ```bash
-npm run smoke -w apps/server           # 接口冒烟 77 项（需先 npm run dev）
+npm run smoke -w apps/server           # 接口冒烟 89 项（需先 npm run dev）
 npm run test:normalize -w apps/server  # 金额/日期归一化 25 项
 npm run test:extraction -w apps/server # 内容识别端到端 34 项（假服务，不出网）
 npm run verify:live -w apps/server     # 真实调用验准确率（会计费）
@@ -67,11 +72,16 @@ npm run bench:parse -w apps/server     # 量本地 PDF 解析耗时
 - `docs/design/00-总体设计.md` —— 候选设计，**未冻结**，与后续模块文档冲突处以模块文档为准
 - `docs/design/01-合同主数据模块.md` —— 字段、状态、权限、验收标准
 - `docs/design/02-合同内容识别.md` —— DeepSeek 接入、两段式流水线、实测结果
+- `docs/design/03-审批流程与设置模块.md` —— 新生命周期、审批、设置模块（供应商字段待财务确认）
 
 **约定：每个模块实现前先出一份模块设计**，放 `docs/design/NN-模块名.md`。
 
 ## 下一步
 
-用户管理界面和审批流程是下一个模块（两者耦合，一起做）。用户管理的后端接口已经有了，缺界面。
+审批流程的**后端和状态机已完成**（单级审核，见 03 设计文档）。还差：
 
-已知未做：导出 Excel、全局审计查询页、相对方独立表、数据字典维护。
+1. **设置模块**：数据字典（合同类型等不再写死）、用户管理界面（先放占位入口）
+2. **供应商表** —— 字段清单还在等财务／合同负责人确认，尤其是银行账号要不要进系统
+3. 支付流程（付款计划、发票、实付跟踪）—— 明确不在本期
+
+已知未做：导出 Excel、全局审计查询页。

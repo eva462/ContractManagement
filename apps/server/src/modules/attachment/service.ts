@@ -96,7 +96,7 @@ export async function uploadAttachment(
 
   const subject = { ownerId: contract.ownerId, status: contract.status as ContractStatus }
   if (!canManageAttachments(actor, subject)) {
-    if (subject.status === 'ARCHIVED') {
+    if (subject.status === 'CLOSED') {
       throw new AppError(ErrorCode.CONTRACT_READONLY, '合同已归档，不能再增删附件', 409)
     }
     throw forbidden('只能给自己经办的合同上传附件')
@@ -215,7 +215,7 @@ export async function deleteAttachment(
   }
 
   if (!canManageAttachments(actor, subject)) {
-    if (subject.status === 'ARCHIVED') {
+    if (subject.status === 'CLOSED') {
       throw new AppError(ErrorCode.CONTRACT_READONLY, '合同已归档，不能再增删附件', 409)
     }
     throw forbidden('只能删除自己经办的合同的附件')

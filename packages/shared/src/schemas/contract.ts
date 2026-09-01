@@ -154,14 +154,24 @@ export const ContractStatusChangeSchema = z
     action: z.enum(CONTRACT_ACTION_VALUES),
     terminationReason: nullableText(2000, '终止原因'),
     terminatedAt: nullableDate,
+    /** 线下纸面签署完成的日期，登记签署时必填 */
+    signedDate: nullableDate,
+    /** 审批意见。驳回时必填，通过时可选 */
+    comment: nullableText(2000, '审批意见'),
   })
   .superRefine((v, ctx) => {
-    if (v.action !== 'TERMINATE') return
-    if (!v.terminationReason) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['terminationReason'], message: '终止原因不能为空' })
+    const need = (path: string, value: unknown, message: string): void => {
+      if (!value) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message })
     }
-    if (!v.terminatedAt) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['terminatedAt'], message: '终止日期不能为空' })
+    if (v.action === 'TERMINATE') {
+      need('terminationReason', v.terminationReason, '终止原因不能为空')
+      need('terminatedAt', v.terminatedAt, '终止日期不能为空')
+    }
+    if (v.action === 'MARK_SIGNED') {
+      need('signedDate', v.signedDate, '签署日期不能为空')
+    }
+    if (v.action === 'REJECT') {
+      need('comment', v.comment, '驳回必须写明意见，否则经办人不知道该改什么')
     }
   })
 
@@ -209,7 +219,7 @@ export interface ContractDetail extends ContractListItem {
   remark: string | null
   terminatedAt: string | null
   terminationReason: string | null
-  archivedFrom: ContractStatus | null
+  closedFrom: ContractStatus | null
   createdBy: UserBrief | null
   updatedBy: UserBrief | null
   /** 当前登录用户在这条合同上能做什么，前端据此决定按钮显隐 */
@@ -228,5 +238,6 @@ export interface ContractPermissions {
     danger: boolean
     confirm: string
     needsReason: boolean
+    needsSignedDate: boolean
   }[]
 }

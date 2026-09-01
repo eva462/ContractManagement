@@ -247,7 +247,7 @@ export function ContractFormPage(): ReactNode {
       setErrors(local)
       setTopError(
         mode === 'activate'
-          ? `还差 ${Object.keys(local).length} 项没填好，补齐后才能提交生效`
+          ? `还差 ${Object.keys(local).length} 项没填好，补齐后才能提交审核`
           : '有 ' + Object.keys(local).length + ' 项填写有误，请检查标红的字段',
       )
       return
@@ -259,9 +259,9 @@ export function ContractFormPage(): ReactNode {
       if (isEdit && id) {
         await contractApi.update(id, payload)
         if (mode === 'activate') {
-          await contractApi.changeStatus(id, { action: 'ACTIVATE' })
+          await contractApi.changeStatus(id, { action: 'SUBMIT' })
         }
-        toast.success(mode === 'activate' ? '已提交生效' : '已保存')
+        toast.success(mode === 'activate' ? '已提交审核' : '已保存')
         navigate(`/contracts/${id}`)
       } else {
         const { data } = await contractApi.create({ ...payload, activate: mode === 'activate' })
@@ -276,7 +276,7 @@ export function ContractFormPage(): ReactNode {
           }
         }
 
-        toast.success(mode === 'activate' ? '合同已创建并提交生效' : '已存为草稿')
+        toast.success(mode === 'activate' ? '合同已创建并提交审核' : '已存为草稿')
         navigate(`/contracts/${data.id}`)
       }
     } catch (err) {
@@ -309,8 +309,10 @@ export function ContractFormPage(): ReactNode {
     return (
       <Card title="无法编辑">
         <p className="text-sm text-slate-700">
-          {detail?.status === 'ARCHIVED'
-            ? '该合同已归档，处于只读状态。需要修改请让管理员先解除归档。'
+          {detail?.status === 'CLOSED'
+            ? '该合同已完结，处于只读状态。需要修改请让管理员先解除完结。'
+            : detail?.status === 'PENDING_APPROVAL'
+            ? '该合同正在审核中，不能修改。需要改动请先撤回，撤回后审核意见作废。'
             : '你没有编辑这份合同的权限，只有经办人本人和合同管理员可以修改。'}
         </p>
         <div className="mt-4">
@@ -330,7 +332,7 @@ export function ContractFormPage(): ReactNode {
             {isEdit ? '编辑合同' : '新建合同'}
           </h1>
           <p className="mt-0.5 text-sm text-slate-600">
-            带 <span className="text-rose-500">*</span> 的是提交生效时必填。存草稿只要有合同名称就行。
+            带 <span className="text-rose-500">*</span> 的是提交审核时必填。存草稿只要有合同名称就行。
           </p>
         </div>
         <div className="flex gap-2">
@@ -346,7 +348,7 @@ export function ContractFormPage(): ReactNode {
               onClick={() => void submit('activate')}
               loading={saving === 'activate'}
             >
-              保存并提交生效
+              保存并提交审核
             </Button>
           )}
         </div>

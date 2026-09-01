@@ -161,8 +161,8 @@ async function main(): Promise<void> {
       expiryDate: daysFromNow(-300),
       isPerpetual: false,
       ownerId: staff.id,
-      status: 'ARCHIVED' as const,
-      archivedFrom: 'ACTIVE' as const,
+      status: 'CLOSED' as const,
+      closedFrom: 'ACTIVE' as const,
     },
   ]
 

@@ -16,12 +16,25 @@ enum Role {
   STAFF
 }
 
-// 只有 4 个存储状态。「已到期」由 expiryDate 实时派生，不落库。
+// 「已到期」不在这里，由 expiryDate 实时派生，不落库。
+//
+// 注意 PENDING_FILING「待归档」和 CLOSED「已完结」是两个相反的概念：
+// 前者是纸件入档 + 扫描件上传，是生效前的关口；后者是合同完结封存。
+// 详见 docs/design/03-审批流程与设置模块.md
 enum ContractStatus {
   DRAFT
+  PENDING_APPROVAL
+  PENDING_SIGNING
+  PENDING_FILING
   ACTIVE
   TERMINATED
-  ARCHIVED
+  CLOSED
+}
+
+enum ApprovalDecision {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum ContractType {
@@ -71,6 +84,10 @@ enum AuditAction {
   LOGIN
   LOGIN_FAILED
   EXTRACT
+  SUBMIT
+  APPROVE
+  REJECT
+  WITHDRAW
 }
 
 model User {
@@ -83,12 +100,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  ownedContracts   Contract[]           @relation("ContractOwner")
-  createdContracts Contract[]           @relation("ContractCreatedBy")
-  updatedContracts Contract[]           @relation("ContractUpdatedBy")
-  uploads          ContractAttachment[]
-  auditLogs        AuditLog[]
-  refreshTokens    RefreshToken[]
+  ownedContracts    Contract[]           @relation("ContractOwner")
+  createdContracts  Contract[]           @relation("ContractCreatedBy")
+  updatedContracts  Contract[]           @relation("ContractUpdatedBy")
+  uploads           ContractAttachment[]
+  auditLogs         AuditLog[]
+  approvalsAssigned ContractApproval[]   @relation("ApprovalApprover")
+  approvalsDecided  ContractApproval[]   @relation("ApprovalDecidedBy")
+  refreshTokens     RefreshToken[]
 
   @@map("users")
 }
@@ -132,8 +151,11 @@ model Contract {
   ownerId String?
   status  ContractStatus @default(DRAFT)
 
-  // 归档前的状态。解除归档时回到这里，而不是笼统地回到 ACTIVE。
-  archivedFrom ContractStatus?
+  // 完结前的状态。解除完结时回到这里，而不是笼统地回到 ACTIVE。
+  closedFrom ContractStatus?
+
+  // 线下纸面签署完成的日期，登记签署时填
+  signedDate DateTime? @db.Date
 
   originalLocation  String?
   remark            String?
@@ -150,6 +172,7 @@ model Contract {
   createdBy   User?                @relation("ContractCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   updatedBy   User?                @relation("ContractUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   attachments ContractAttachment[]
+  approvals   ContractApproval[]
 
   @@index([status])
   @@index([ownerId])
@@ -157,7 +180,6 @@ model Contract {
   @@index([signDate])
   @@index([expiryDate])
   @@index([deletedAt])
-
   // 中文关键词搜索用 ILIKE '%x%'，走不了 B-tree；trgm 的 GIN 索引可以。
   // 必须在这里声明，否则 prisma migrate 会把手写的索引当成 drift 再 DROP 掉。
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
@@ -214,4 +236,32 @@ model AuditLog {
   @@index([entityType, entityId, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
   @@map("audit_logs")
+}
+
+/// 审批节点。当前是单级审核（提交时只生成一条 seq=1），但表结构按多级设计，
+/// 以后要升到两级或按金额分级，只改「生成审批节点」那个函数，不用动这张表。
+model ContractApproval {
+  id         String @id @default(cuid())
+  contractId String
+  /// 第几级，从 1 开始。单级审核恒为 1。
+  seq        Int
+
+  /// 指定审批人。留空 = 任意 MANAGER 及以上都可以审（当前单级审核就是这样，
+  /// 这样不用先做审批人配置界面就能跑起来）。
+  approverId String?
+
+  decision    ApprovalDecision @default(PENDING)
+  /// 驳回时必填
+  comment     String?
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  contract  Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  approver  User?    @relation("ApprovalApprover", fields: [approverId], references: [id], onDelete: Restrict)
+  decidedBy User?    @relation("ApprovalDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([contractId, seq])
+  @@index([decision])
+  @@map("contract_approvals")
 }

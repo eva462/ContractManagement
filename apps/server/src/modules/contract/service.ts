@@ -19,7 +19,7 @@ import {
   type ContractWriteValues,
   type Currency,
 } from '@contract/shared'
-import { db } from '../../db.js'
+import { db, type Tx } from '../../db.js'
 import { env } from '../../env.js'
 import { AppError, badRequest, conflict, forbidden, notFound, validationFailed } from '../../http/errors.js'
 import { describeCreatedFields, describeFieldChanges, diffFields } from '../audit/diff.js'
@@ -278,13 +278,14 @@ export async function updateContract(
   const subject = { ownerId: existing.ownerId, status: existing.status as ContractStatus }
 
   if (!canEdit(actor, subject)) {
-    if (subject.status === 'ARCHIVED') {
-      throw new AppError(
-        ErrorCode.CONTRACT_READONLY,
-        '合同已归档，处于只读状态。如需修改请先解除归档。',
-        409,
-      )
+    // 因状态而不可编辑时，给专门的错误码和「该怎么办」的提示；
+    // 只有确实是权限不够才回笼统的 403。
+    const readonlyMessage: Partial<Record<ContractStatus, string>> = {
+      PENDING_APPROVAL: '合同正在审核中，不能修改。需要改动请先撤回，撤回后本轮审核意见作废。',
+      CLOSED: '合同已完结，处于只读状态。如需修改请让管理员先解除完结。',
     }
+    const msg = readonlyMessage[subject.status]
+    if (msg) throw new AppError(ErrorCode.CONTRACT_READONLY, msg, 409)
     throw forbidden('只能编辑自己经办的合同')
   }
 
@@ -415,27 +416,52 @@ export async function changeContractStatus(
     if (issues.length > 0) {
       throw new AppError(
         ErrorCode.INCOMPLETE_FOR_ACTIVATION,
-        '以下字段还没填完，不能提交生效',
+        `以下字段还没填完，不能${def.label}`,
         400,
         issues,
       )
     }
   }
 
+  // 「待归档 → 履行中」那道过不去的关口：纸件必须真的入档、扫描件必须真的上传。
+  // 这是整套流程的价值所在 —— 用系统兜住，而不是靠人自觉。
+  if (def.requiresFiling) {
+    const issues: { field: string; message: string }[] = []
+    const originals = await db.contractAttachment.count({
+      where: { contractId: id, attachmentType: 'ORIGINAL' },
+    })
+    if (originals === 0) {
+      issues.push({
+        field: 'attachments',
+        message: '请先上传签署后的扫描件，附件分类选「合同正本」',
+      })
+    }
+    if (!existing.originalLocation) {
+      issues.push({ field: 'originalLocation', message: '请填写纸质原件的存放位置' })
+    }
+    if (issues.length > 0) {
+      throw new AppError(ErrorCode.VALIDATION_FAILED, '归档还没完成，不能让合同生效', 400, issues)
+    }
+  }
+
   // to 为 null 表示「回到归档前的状态」
   const target: ContractStatus =
-    def.to ?? ((existing.archivedFrom as ContractStatus | null) ?? 'ACTIVE')
+    def.to ?? ((existing.closedFrom as ContractStatus | null) ?? 'ACTIVE')
 
   const data: Record<string, unknown> = { status: target, updatedById: actor.id }
   const changes: Record<string, { before: unknown; after: unknown }> = {
     status: { before: from, after: target },
   }
 
-  if (input.action === 'ARCHIVE') {
-    data.archivedFrom = from
+  if (input.action === 'CLOSE') {
+    data.closedFrom = from
   }
-  if (input.action === 'UNARCHIVE') {
-    data.archivedFrom = null
+  if (input.action === 'REOPEN') {
+    data.closedFrom = null
+  }
+  if (input.action === 'MARK_SIGNED') {
+    data.signedDate = dateStringToDate(input.signedDate as string)
+    changes.signedDate = { before: null, after: input.signedDate }
   }
   if (input.action === 'TERMINATE') {
     data.terminatedAt = dateStringToDate(input.terminatedAt as string)
@@ -450,6 +476,28 @@ export async function changeContractStatus(
   if (input.action === 'TERMINATE') {
     summary += `，终止日期 ${input.terminatedAt}，原因：${input.terminationReason}`
   }
+  if (input.action === 'MARK_SIGNED') {
+    summary += `，签署日期 ${input.signedDate}`
+  }
+  const comment = typeof input.comment === 'string' && input.comment.trim() !== ''
+    ? input.comment.trim()
+    : null
+  if (comment) {
+    summary += `，意见：${comment}`
+  }
+
+  // 审批相关的动作单独记，这样留痕时间线上「提交/通过/驳回/撤回」
+  // 一眼可辨，而不是清一色的「状态流转」
+  const auditAction =
+    input.action === 'SUBMIT'
+      ? 'SUBMIT'
+      : input.action === 'APPROVE'
+        ? 'APPROVE'
+        : input.action === 'REJECT'
+          ? 'REJECT'
+          : input.action === 'WITHDRAW'
+            ? 'WITHDRAW'
+            : 'STATUS_CHANGE'
 
   return db.$transaction(async (tx) => {
     const updated = await tx.contract.update({
@@ -457,10 +505,18 @@ export async function changeContractStatus(
       data: data as never,
       include: contractDetailInclude,
     })
+
+    await applyApprovalSideEffects(tx, {
+      contractId: id,
+      action: input.action,
+      actorId: actor.id,
+      comment,
+    })
+
     await writeAudit(tx, {
       entityType: 'CONTRACT',
       entityId: id,
-      action: 'STATUS_CHANGE',
+      action: auditAction,
       userId: actor.id,
       userName: actor.displayName,
       summary,
@@ -470,4 +526,51 @@ export async function changeContractStatus(
     })
     return toDetail(updated as ContractRow, actor)
   })
+}
+
+/**
+ * 审批节点的读写。**当前是单级审核**：提交时只生成一条 seq=1、approverId 为空
+ * 的节点，表示「任意 MANAGER 及以上都可以审」。
+ *
+ * 要升级到指定审批人或多级串行，只改这个函数里生成节点的那几行，
+ * 数据表、接口、前端都不用动。
+ */
+async function applyApprovalSideEffects(
+  tx: Tx,
+  args: { contractId: string; action: ContractAction; actorId: string; comment: string | null },
+): Promise<void> {
+  const { contractId, action, actorId, comment } = args
+
+  if (action === 'SUBMIT') {
+    // 重新提交时先清掉上一轮的节点，避免历史驳回记录混进本轮
+    await tx.contractApproval.deleteMany({ where: { contractId } })
+    await tx.contractApproval.create({
+      data: { contractId, seq: 1, approverId: null, decision: 'PENDING' },
+    })
+    return
+  }
+
+  if (action === 'APPROVE' || action === 'REJECT') {
+    const pending = await tx.contractApproval.findFirst({
+      where: { contractId, decision: 'PENDING' },
+      orderBy: { seq: 'asc' },
+    })
+    if (pending) {
+      await tx.contractApproval.update({
+        where: { id: pending.id },
+        data: {
+          decision: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+          comment,
+          decidedById: actorId,
+          decidedAt: new Date(),
+        },
+      })
+    }
+    return
+  }
+
+  if (action === 'WITHDRAW') {
+    // 撤回等于本轮审批作废，节点直接清掉
+    await tx.contractApproval.deleteMany({ where: { contractId } })
+  }
 }

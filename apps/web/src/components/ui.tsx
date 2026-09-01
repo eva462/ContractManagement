@@ -196,11 +196,16 @@ export function Checkbox({
 
 /* ── 状态标签 ───────────────────────────────────────────────────────── */
 
+// 三个 PENDING_* 是「球在谁那儿」的中间态，用暖色/冷色区分该谁动：
+// 待审核=等人审（琥珀）、待签署=等线下盖章（蓝）、待归档=等传扫描件（紫）
 const STATUS_STYLES: Record<ContractStatus, string> = {
   DRAFT: 'bg-slate-100 text-slate-700 ring-slate-300',
+  PENDING_APPROVAL: 'bg-amber-50 text-amber-700 ring-amber-300',
+  PENDING_SIGNING: 'bg-sky-50 text-sky-700 ring-sky-300',
+  PENDING_FILING: 'bg-violet-50 text-violet-700 ring-violet-300',
   ACTIVE: 'bg-emerald-50 text-emerald-700 ring-emerald-300',
   TERMINATED: 'bg-orange-50 text-orange-700 ring-orange-300',
-  ARCHIVED: 'bg-slate-200 text-slate-700 ring-slate-300',
+  CLOSED: 'bg-slate-200 text-slate-700 ring-slate-300',
 }
 
 export function StatusBadge({ status }: { status: ContractStatus }): ReactNode {

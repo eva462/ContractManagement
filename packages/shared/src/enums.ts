@@ -28,17 +28,55 @@ export function roleAtLeast(actual: Role, required: Role): boolean {
 /* ── 合同状态 ───────────────────────────────────────────────────────── */
 
 /**
- * 只有 4 个存储状态。「已到期」不在这里 —— 它由 expiryDate 实时派生，
- * 见 ExpiryState，这样不需要定时任务，也不会出现状态与日期对不上的脏数据。
+ * 合同生命周期。「已到期」不在这里 —— 它由 expiryDate 实时派生（见 ExpiryState），
+ * 这样不需要定时任务，也不会出现状态与日期对不上的脏数据。
+ *
+ * ⚠️ 「归档」在业务里有两个相反的意思，这里刻意用了两个词区分：
+ *   PENDING_FILING「待归档」= 纸质原件入档 + 扫描件上传，是**生效前的一道关口**
+ *   CLOSED「已完结」        = 合同完结封存、只读，是**终点**
+ * 详见 docs/design/03-审批流程与设置模块.md §1。
  */
-export const CONTRACT_STATUS_VALUES = ['DRAFT', 'ACTIVE', 'TERMINATED', 'ARCHIVED'] as const
+export const CONTRACT_STATUS_VALUES = [
+  'DRAFT',
+  'PENDING_APPROVAL',
+  'PENDING_SIGNING',
+  'PENDING_FILING',
+  'ACTIVE',
+  'TERMINATED',
+  'CLOSED',
+] as const
 export type ContractStatus = (typeof CONTRACT_STATUS_VALUES)[number]
 
 export const CONTRACT_STATUS_LABEL: Record<ContractStatus, string> = {
   DRAFT: '草稿',
+  PENDING_APPROVAL: '待审核',
+  PENDING_SIGNING: '待签署',
+  PENDING_FILING: '待归档',
   ACTIVE: '履行中',
   TERMINATED: '已终止',
-  ARCHIVED: '已归档',
+  CLOSED: '已完结',
+}
+
+/** 每个状态下一步该干什么，显示在详情页状态标签旁，让人知道球在谁那儿 */
+export const CONTRACT_STATUS_HINT: Record<ContractStatus, string> = {
+  DRAFT: '补齐信息后提交审核',
+  PENDING_APPROVAL: '等待审核人处理',
+  PENDING_SIGNING: '转线下纸面签署盖章，签完回来登记',
+  PENDING_FILING: '上传签署后的扫描件并填写原件存放位置',
+  ACTIVE: '正常履行中',
+  TERMINATED: '已提前解除',
+  CLOSED: '已完结封存，只读',
+}
+
+/* ── 审批 ──────────────────────────────────────────────────────────── */
+
+export const APPROVAL_DECISION_VALUES = ['PENDING', 'APPROVED', 'REJECTED'] as const
+export type ApprovalDecision = (typeof APPROVAL_DECISION_VALUES)[number]
+
+export const APPROVAL_DECISION_LABEL: Record<ApprovalDecision, string> = {
+  PENDING: '待审核',
+  APPROVED: '已通过',
+  REJECTED: '已驳回',
 }
 
 /* ── 到期派生态（不落库）────────────────────────────────────────────── */
@@ -152,6 +190,10 @@ export const AUDIT_ACTION_VALUES = [
   'LOGIN',
   'LOGIN_FAILED',
   'EXTRACT',
+  'SUBMIT',
+  'APPROVE',
+  'REJECT',
+  'WITHDRAW',
 ] as const
 export type AuditAction = (typeof AUDIT_ACTION_VALUES)[number]
 
@@ -165,4 +207,8 @@ export const AUDIT_ACTION_LABEL: Record<AuditAction, string> = {
   LOGIN: '登录',
   LOGIN_FAILED: '登录失败',
   EXTRACT: '内容识别',
+  SUBMIT: '提交审核',
+  APPROVE: '审核通过',
+  REJECT: '审核驳回',
+  WITHDRAW: '撤回',
 }

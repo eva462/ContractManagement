@@ -44,7 +44,7 @@ export interface ContractRow {
   isPerpetual: boolean
   ownerId: string | null
   status: string
-  archivedFrom: string | null
+  closedFrom: string | null
   originalLocation: string | null
   remark: string | null
   terminatedAt: Date | null
@@ -102,7 +102,7 @@ export function toDetail(row: ContractRow, actor: Actor): ContractDetail {
     remark: row.remark,
     terminatedAt: dateToDateString(row.terminatedAt),
     terminationReason: row.terminationReason,
-    archivedFrom: row.archivedFrom as ContractStatus | null,
+    closedFrom: row.closedFrom as ContractStatus | null,
     createdBy: toUserBrief(row.createdBy),
     updatedBy: toUserBrief(row.updatedBy),
     permissions: contractPermissions(actor, {

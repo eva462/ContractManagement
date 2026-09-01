@@ -20,6 +20,10 @@ const ACTION_DOT: Record<AuditAction, string> = {
   LOGIN: 'bg-slate-400',
   LOGIN_FAILED: 'bg-rose-400',
   EXTRACT: 'bg-indigo-500',
+  SUBMIT: 'bg-amber-500',
+  APPROVE: 'bg-emerald-600',
+  REJECT: 'bg-rose-600',
+  WITHDRAW: 'bg-slate-500',
 }
 
 function formatTime(iso: string): string {
